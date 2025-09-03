@@ -1,110 +1,29 @@
-import re
-import pickle
-from typing import List, Tuple, Optional
-from collections import Counter
-from pathlib import Path
-import random
-
 import torch
 from torch.utils.data import Dataset, DataLoader
-import pytorch_lightning as pl
+from pathlib import Path
 import datasets
+import numpy as np
+import random
+import pytorch_lightning as pl
+from collections import Counter
+# from word_tokenizer import WordTokenizer
 
 
-class WordTokenizer:
-    """Word-level tokenizer for WikiText-103"""
-
-    PAD_TOKEN = '<pad>'
-    UNK_TOKEN = '<unk>'
-    BOS_TOKEN = '<bos>'
-    EOS_TOKEN = '<eos>'
-    SPECIAL_TOKENS = [PAD_TOKEN, UNK_TOKEN, BOS_TOKEN, EOS_TOKEN]
-
-    def __init__(self, vocab_size: int = 50000, min_freq: int = 2):
-        self.vocab_size = vocab_size
-        self.min_freq = min_freq
-        self.word2idx = {}
-        self.idx2word = {}
-        self.word_counts = Counter()
-
-    def _tokenize_text(self, text: str) -> List[str]:
-        text = text.lower()
-        text = re.sub(r'([.!?;,:])', r' \1 ', text)
-        text = re.sub(r'\s+', ' ', text)
-        return text.strip().split()
-
-    def build_vocab(self, texts: List[str]) -> None:
-        if not texts:
-            raise ValueError("No texts provided to build vocabulary.")
-        for text in texts:
-            self.word_counts.update(self._tokenize_text(text))
-
-        most_common = [word for word, count in self.word_counts.most_common()
-                       if count >= self.min_freq]
-        vocab_words = most_common[:self.vocab_size - len(self.SPECIAL_TOKENS)]
-
-        # Add special tokens
-        self.word2idx = {token: i for i, token in enumerate(self.SPECIAL_TOKENS)}
-        self.idx2word = {i: token for i, token in enumerate(self.SPECIAL_TOKENS)}
-
-        # Add vocab words
-        for i, word in enumerate(vocab_words):
-            idx = i + len(self.SPECIAL_TOKENS)
-            self.word2idx[word] = idx
-            self.idx2word[idx] = word
-
-        print(f"Vocabulary built with {len(self.word2idx)} tokens.")
-
-    def encode(self, text: str) -> List[int]:
-        tokens = self._tokenize_text(text)
-        return [self.word2idx.get(token, self.word2idx[self.UNK_TOKEN]) for token in tokens]
-
-    def decode(self, token_ids: List[int]) -> str:
-        return ' '.join([self.idx2word.get(idx, self.UNK_TOKEN) for idx in token_ids])
-
-    def save(self, filepath: str) -> None:
-        data = {
-            'word2idx': self.word2idx,
-            'idx2word': self.idx2word,
-            'vocab_size': self.vocab_size,
-            'min_freq': self.min_freq
-        }
-        with open(filepath, 'wb') as f:
-            pickle.dump(data, f)
-        print(f"Tokenizer saved to {filepath}")
-
-    def load(self, filepath: str) -> None:
-        with open(filepath, 'rb') as f:
-            data = pickle.load(f)
-        self.word2idx = data['word2idx']
-        self.idx2word = data['idx2word']
-        self.vocab_size = data['vocab_size']
-        self.min_freq = data['min_freq']
-        print(f"Tokenizer loaded from {filepath}")
-
-    @property
-    def pad_token_id(self) -> int:
-        return self.word2idx[self.PAD_TOKEN]
-
-    @property
-    def unk_token_id(self) -> int:
-        return self.word2idx[self.UNK_TOKEN]
-
-    @property
-    def bos_token_id(self) -> int:
-        return self.word2idx[self.BOS_TOKEN]
-
-    @property
-    def eos_token_id(self) -> int:
-        return self.word2idx[self.EOS_TOKEN]
-
-
-class WikiTextDataset(Dataset):
-    def __init__(self, texts, tokenizer, sequence_length=35, stride=1):
+class TokenizedTextDataset(Dataset):
+    """Dataset for next-token prediction with lazy sequence slicing (no padding)."""
+    
+    def __init__(self, tokenized_ids, sequence_length=128, stride=64, tokenizer=None, sanity_checks=True):
+        self.tokenized_ids = np.array(tokenized_ids, dtype=np.int32)  # fast slicing
         self.sequence_length = sequence_length
         self.stride = stride
-        self.token_ids = [token for text in texts for token in tokenizer.encode(text)]
-        self.num_sequences = (len(self.token_ids) - sequence_length - 1) // stride
+        self.tokenizer = tokenizer
+
+        # number of sequences (skip last partial sequence)
+        total_tokens = len(self.tokenized_ids)
+        self.num_sequences = max(0, (total_tokens - sequence_length) // stride)
+
+        if sanity_checks:
+            self.run_sanity_checks()
 
     def __len__(self):
         return self.num_sequences
@@ -112,137 +31,155 @@ class WikiTextDataset(Dataset):
     def __getitem__(self, idx):
         start = idx * self.stride
         end = start + self.sequence_length + 1
-        seq = self.token_ids[start:end]
-        input_ids = torch.tensor(seq[:-1], dtype=torch.long)
-        target_ids = torch.tensor(seq[1:], dtype=torch.long)
-        return input_ids, target_ids
+        seq = self.tokenized_ids[start:end]
+        x = torch.tensor(seq[:-1], dtype=torch.long)
+        y = torch.tensor(seq[1:], dtype=torch.long)
+        return x, y
+
+    def run_sanity_checks(self, num_samples=5):
+        print("Running dataset sanity checks...")
+        vocab_size = getattr(self.tokenizer, "vocab_size", None)
+        for _ in range(min(num_samples, len(self))):
+            idx = random.randint(0, len(self)-1)
+            x, y = self[idx]
+            assert x.dtype == torch.long and y.dtype == torch.long
+            if vocab_size is not None:
+                assert all(0 <= t < vocab_size for t in x.tolist() + y.tolist())
+            assert (x[1:] == y[:-1]).all()
+            if self.tokenizer is not None:
+                decoded = self.tokenizer.decode(torch.cat([x, y[-1:]]).tolist())
+                print(f"✔ Sample decoded: {decoded[:100]}...")
+        print("All dataset sanity checks passed ✅")
+
+    
 
 
+    def diagnostic_report(self, num_samples: int = 5) -> None:
+        print("\n--- DATASET DIAGNOSTIC REPORT ---")
 
-def collate_fn_cbr(batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor]:
-    inputs, targets = zip(*batch)
-    input_batch = torch.stack(inputs).transpose(0, 1)
-    target_batch = torch.stack(targets).transpose(0, 1)
-    return input_batch, target_batch
+        # Gather all tokens from inputs
+        all_tokens = torch.cat([self[i][0] for i in range(len(self))]).tolist()
+        total = len(all_tokens)
+        unk_count = all_tokens.count(self.tokenizer.unk_token_id)
+        print(f"Total tokens: {total}")
+        print(f"OOV rate: {unk_count/total:.2%}")
 
+        # Special tokens count
+        for special, tid in [
+            ("PAD", self.tokenizer.pad_token_id),
+            ("UNK", self.tokenizer.unk_token_id),
+            ("BOS", self.tokenizer.bos_token_id),
+            ("EOS", self.tokenizer.eos_token_id),
+        ]:
+            print(f"{special} count: {all_tokens.count(tid)}")
 
-class WikiTextDataModule(pl.LightningDataModule):
-    """PyTorch Lightning DataModule for WikiText-103"""
+        # Top 10 frequent tokens
+        top = Counter(all_tokens).most_common(10)
+        print("Top 10 tokens:", [(self.tokenizer.idx2word.get(t, '<unk>'), c) for t, c in top])
 
-    def __init__(self, data_path: str, tokenizer_path: Optional[str] = None,
-                 vocab_size: int = 50000, min_freq: int = 2, sequence_length: int = 35,
-                 batch_size: int = 32, num_workers: int = 4, stride: int = 1):
+        # Sequence length stats
+        lengths = [len(self[i][0]) for i in range(len(self))]
+        print(f"Sequence length: min={min(lengths)}, max={max(lengths)}, mean={sum(lengths)/len(lengths):.2f}")
+
+        # Alignment check
+        print("\nSample input/target pairs (decoded):")
+        for i in torch.randint(0, len(self), (num_samples,)):
+            x, y = self[i]
+            print("Input :", self.tokenizer.decode(x.tolist()[:20]))
+            print("Target:", self.tokenizer.decode(y.tolist()[:20]))
+            print("---")
+
+        # Integrity check
+        bad = [tok for tok in all_tokens if tok < 0 or tok >= self.tokenizer.vocab_size]
+        if bad:
+            print(f"❌ Found {len(bad)} invalid token IDs!")
+        else:
+            print("✔ All token IDs are within valid range.")
+
+        print("--- END OF REPORT ---\n")
+
+class WikiTextLightningDataModule(pl.LightningDataModule):
+    """PyTorch Lightning DataModule for tokenized Wikitext."""
+
+    def __init__(self, tokenized_path: str, tokenizer, sequence_length=128, stride=64,
+                 batch_size=32, num_workers=4, pin_memory=True):
         super().__init__()
-        self.data_path = Path(data_path)
-        self.tokenizer_path = tokenizer_path
-        self.vocab_size = vocab_size
-        self.min_freq = min_freq
+        self.tokenized_path = Path(tokenized_path)
+        self.tokenizer = tokenizer
         self.sequence_length = sequence_length
         self.stride = stride
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.pin_memory = pin_memory
 
-        self.tokenizer = None
         self.train_dataset = None
         self.val_dataset = None
         self.test_dataset = None
 
-    def prepare_data(self):
-        if not self.data_path.exists():
-            raise FileNotFoundError(f"Dataset path {self.data_path} not found.")
-        print(f"Using dataset from {self.data_path}")
+    def setup(self, stage=None):
+        tokenized_ds = datasets.load_from_disk(self.tokenized_path)
 
-    def setup(self, stage: Optional[str] = None):
-        wikitext = datasets.load_from_disk(self.data_path)
+        def flatten_split(split_name):
+            return np.concatenate([np.array(seq, dtype=np.int32) for seq in tokenized_ds[split_name]['input_ids']])
 
-        # Load or build tokenizer
-        if self.tokenizer_path and Path(self.tokenizer_path).exists():
-            self.tokenizer = WordTokenizer()
-            self.tokenizer.load(self.tokenizer_path)
-        else:
-            self.tokenizer = WordTokenizer(vocab_size=self.vocab_size, min_freq=self.min_freq)
-            train_texts = [t for t in wikitext['train']['text'] if t.strip()]
-            self.tokenizer.build_vocab(train_texts)
-            if self.tokenizer_path:
-                self.tokenizer.save(self.tokenizer_path)
+        if stage in ('fit', None):
+            train_ids = flatten_split('train')
+            val_ids = flatten_split('validation')
+            self.train_dataset = TokenizedTextDataset(train_ids, self.sequence_length, self.stride, self.tokenizer)
+            self.val_dataset = TokenizedTextDataset(val_ids, self.sequence_length, self.stride, self.tokenizer, sanity_checks=False)
 
-        if stage in ("fit", None):
-            self.train_dataset = WikiTextDataset([t for t in wikitext['train']['text'] if t.strip()],
-                                                 self.tokenizer, self.sequence_length, self.stride)
-            self.val_dataset = WikiTextDataset([t for t in wikitext['validation']['text'] if t.strip()],
-                                               self.tokenizer, self.sequence_length, self.stride)
-        if stage in ("test", None):
-            self.test_dataset = WikiTextDataset([t for t in wikitext['test']['text'] if t.strip()],
-                                                self.tokenizer, self.sequence_length, self.stride)
+        if stage in ('test', None):
+            test_ids = flatten_split('test')
+            self.test_dataset = TokenizedTextDataset(test_ids, self.sequence_length, self.stride, self.tokenizer, sanity_checks=False)
+
+    def _dataloader(self, dataset, shuffle=False):
+        return DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=shuffle,
+            num_workers=self.num_workers,
+            drop_last=True,
+            pin_memory=self.pin_memory,
+            prefetch_factor=4
+        )
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size,
-                          shuffle=True, num_workers=self.num_workers,
-                          collate_fn=collate_fn_cbr, drop_last=True)
+        return self._dataloader(self.train_dataset, shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size,
-                          shuffle=False, num_workers=self.num_workers,
-                          collate_fn=collate_fn_cbr, drop_last=True)
+        return self._dataloader(self.val_dataset, shuffle=False)
 
     def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size,
-                          shuffle=False, num_workers=self.num_workers,
-                          collate_fn=collate_fn_cbr, drop_last=True)
+        return self._dataloader(self.test_dataset, shuffle=False)
 
+    def run_sanity_checks(self) -> None:
+        print("Running DataModule sanity checks...\n")
 
-def run_sanity_checks(dataset: WikiTextDataset, tokenizer: WordTokenizer, num_samples: int = 5) -> str:
-    """Perform sanity checks and return a string with the results."""
-    results = []
-
-    # 1. Tokenization checks: sample directly from dataset
-    for i in random.sample(range(len(dataset)), min(num_samples, len(dataset))):
-        input_ids, target_ids = dataset[i]
-        seq = torch.cat([input_ids, target_ids[-1:]])  # reconstruct full seq
-        if not all(isinstance(tok.item(), int) for tok in seq):
-            results.append("Tokenization check failed: non-integer token found.")
-        if not all(0 <= tok.item() < len(tokenizer.word2idx) for tok in seq):
-            results.append(f"Tokenization check failed: token out of range in sequence {seq.tolist()}.")
-        decoded = tokenizer.decode(seq.tolist())
-        results.append(f"Decoded sequence: {decoded}")
-
-    # 2. Input/target alignment
-    for input_ids, target_ids in random.sample([dataset[i] for i in range(len(dataset))],
-                                               min(num_samples, len(dataset))):
-        if input_ids.shape != target_ids.shape:
-            results.append("Input/target length mismatch.")
-        if not torch.all(input_ids[1:] == target_ids[:-1]):
-            results.append("Input/target alignment check failed.")
-
-    # 3. Data integrity
-    if len(dataset) == 0:
-        results.append("Dataset is empty.")
-
-    # 4. Dataset statistics
-    all_tokens = dataset.token_ids
-    results.append(f"Total sequences: {len(dataset)}")
-    results.append(f"Total tokens: {len(all_tokens)}")
-    results.append(f"Min token ID: {min(all_tokens)}, Max token ID: {max(all_tokens)}, Mean token ID: {sum(all_tokens)/len(all_tokens):.2f}")
-    results.append(f"Sequence length (input+target): {dataset.sequence_length + 1}")
-
-    return "\n".join(results)
-
+        for name, dataset in [
+            ("TRAIN", self.train_dataset),
+            ("VAL", self.val_dataset),
+            ("TEST", self.test_dataset),
+        ]:
+            if dataset is not None:
+                print(f"--- {name} DATASET ---")
+                dataset.run_sanity_checks()
+                dataset.diagnostic_report(num_samples=3)  # deeper check
+        print("All DataModule sanity checks passed ✅")
 
 
 if __name__ == "__main__":
-    data_path = "cbr_lightning/wikitext-103-local"  # replace with your local dataset path
+    import pickle
+
+    tokenized_dataset_path = "cbr_lightning/wikitext-103-tokenized"
     tokenizer_path = "./tokenizer.pkl"
+    
 
-    # Initialize data module
-    dm = WikiTextDataModule(data_path=data_path, tokenizer_path=tokenizer_path)
-    dm.prepare_data()
-    dm.setup("fit")
+    from cbr_lightning.word_tok import WordTokenizer  # your local tokenizer.py
 
-    # Run sanity checks on training dataset
-    sanity_results = run_sanity_checks(dm.train_dataset, dm.tokenizer, num_samples=10)
+    tokenizer = WordTokenizer()
+    tokenizer.load(tokenizer_path)
 
-    # Save results
-    with open("sanity_check.txt", "w") as f:
-        f.write(sanity_results)
 
-    print("Sanity checks completed. Results saved to sanity_check.txt")
+    dm = WikiTextLightningDataModule(tokenized_path=tokenized_dataset_path, tokenizer=tokenizer)
+    dm.setup('fit')
+    dm.run_sanity_checks()
