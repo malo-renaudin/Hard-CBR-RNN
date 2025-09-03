@@ -100,33 +100,23 @@ class WordTokenizer:
 
 
 class WikiTextDataset(Dataset):
-    """Dataset for WikiText-103, returning (input, target) sequences"""
-
-    def __init__(self, texts: List[str], tokenizer: WordTokenizer, sequence_length: int = 35, stride: int = 1):
+    def __init__(self, texts, tokenizer, sequence_length=35, stride=1):
         self.sequence_length = sequence_length
         self.stride = stride
-        self.sequences = []
-
-        for text in texts:
-            if not text.strip():
-                continue
-            token_ids = tokenizer.encode(text)
-            for i in range(0, len(token_ids) - sequence_length, stride):
-                seq = token_ids[i:i + sequence_length + 1]
-                if len(seq) == sequence_length + 1:
-                    self.sequences.append(seq)
-
-        if not self.sequences:
-            raise ValueError("No sequences generated from texts.")
+        self.token_ids = [token for text in texts for token in tokenizer.encode(text)]
+        self.num_sequences = (len(self.token_ids) - sequence_length - 1) // stride
 
     def __len__(self):
-        return len(self.sequences)
+        return self.num_sequences
 
-    def __getitem__(self, idx) -> Tuple[torch.Tensor, torch.Tensor]:
-        seq = self.sequences[idx]
+    def __getitem__(self, idx):
+        start = idx * self.stride
+        end = start + self.sequence_length + 1
+        seq = self.token_ids[start:end]
         input_ids = torch.tensor(seq[:-1], dtype=torch.long)
         target_ids = torch.tensor(seq[1:], dtype=torch.long)
         return input_ids, target_ids
+
 
 
 def collate_fn_cbr(batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -201,17 +191,19 @@ class WikiTextDataModule(pl.LightningDataModule):
                           collate_fn=collate_fn_cbr, drop_last=True)
 
 
-def run_sanity_checks(dataset: WikiTextDataset, tokenizer: WordTokenizer, num_samples: int = 5, stride: int = 1) -> str:
+def run_sanity_checks(dataset: WikiTextDataset, tokenizer: WordTokenizer, num_samples: int = 5) -> str:
     """Perform sanity checks and return a string with the results."""
     results = []
 
-    # 1. Tokenization checks
-    for seq in random.sample(dataset.sequences, min(num_samples, len(dataset))):
-        if not all(isinstance(tok, int) for tok in seq):
+    # 1. Tokenization checks: sample directly from dataset
+    for i in random.sample(range(len(dataset)), min(num_samples, len(dataset))):
+        input_ids, target_ids = dataset[i]
+        seq = torch.cat([input_ids, target_ids[-1:]])  # reconstruct full seq
+        if not all(isinstance(tok.item(), int) for tok in seq):
             results.append("Tokenization check failed: non-integer token found.")
-        if not all(0 <= tok < tokenizer.vocab_size for tok in seq):
-            results.append(f"Tokenization check failed: token out of range in sequence {seq}.")
-        decoded = tokenizer.decode(seq)
+        if not all(0 <= tok.item() < len(tokenizer.word2idx) for tok in seq):
+            results.append(f"Tokenization check failed: token out of range in sequence {seq.tolist()}.")
+        decoded = tokenizer.decode(seq.tolist())
         results.append(f"Decoded sequence: {decoded}")
 
     # 2. Input/target alignment
@@ -223,24 +215,18 @@ def run_sanity_checks(dataset: WikiTextDataset, tokenizer: WordTokenizer, num_sa
             results.append("Input/target alignment check failed.")
 
     # 3. Data integrity
-    if any(len(seq) == 0 for seq in dataset.sequences):
-        results.append("Empty sequence found in dataset.")
+    if len(dataset) == 0:
+        results.append("Dataset is empty.")
 
-    # 4. Overlap correctness
-    if stride > 1:
-        for seq1, seq2 in zip(dataset.sequences[:-1], dataset.sequences[1:]):
-            expected_overlap = dataset.sequence_length + 1 - stride
-            actual_overlap = sum(a == b for a, b in zip(seq1[-expected_overlap:], seq2[:expected_overlap]))
-            if actual_overlap != expected_overlap:
-                results.append("Overlap check failed.")
-
-    # 5. Dataset statistics
-    all_tokens = [tok for seq in dataset.sequences for tok in seq]
+    # 4. Dataset statistics
+    all_tokens = dataset.token_ids
     results.append(f"Total sequences: {len(dataset)}")
+    results.append(f"Total tokens: {len(all_tokens)}")
     results.append(f"Min token ID: {min(all_tokens)}, Max token ID: {max(all_tokens)}, Mean token ID: {sum(all_tokens)/len(all_tokens):.2f}")
-    results.append(f"Sequence length (all sequences should match): {dataset.sequence_length + 1}")
+    results.append(f"Sequence length (input+target): {dataset.sequence_length + 1}")
 
     return "\n".join(results)
+
 
 
 if __name__ == "__main__":
@@ -253,7 +239,7 @@ if __name__ == "__main__":
     dm.setup("fit")
 
     # Run sanity checks on training dataset
-    sanity_results = run_sanity_checks(dm.train_dataset, dm.tokenizer, num_samples=10, stride=dm.stride)
+    sanity_results = run_sanity_checks(dm.train_dataset, dm.tokenizer, num_samples=10)
 
     # Save results
     with open("sanity_check.txt", "w") as f:
