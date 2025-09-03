@@ -109,8 +109,10 @@ def prepare_construction_subsets(data):
         print(f"Agreement: {len(agreement_subset):,} observations")
     
     # 3. Relative Clauses
-    rc_types = ['RC_SUB', 'RC_OBJ']
+    print('RELATIVE CLAUSE')
+    rc_types = ['RC_Subj', 'RC_Obj']
     rc_subset = data[data['Type'].isin(rc_types)].copy()
+    print(rc_subset)
     if len(rc_subset) > 0:
         # RC type coding: Subject RC = 0, Object RC = 1
         rc_subset['rc_type'] = (rc_subset['Type'] == 'RC_OBJ').astype(int)
@@ -121,14 +123,19 @@ def prepare_construction_subsets(data):
     attach_types = ['AttachHigh', 'AttachLow', 'AttachMulti']
     attach_subset = data[data['Type'].isin(attach_types)].copy()
     if len(attach_subset) > 0:
-        # Create contrast coding for attachment
-        attach_subset['attachment'] = attach_subset['Type'].map({
-            'AttachHigh': 0,    # High attachment
-            'AttachLow': 1,     # Low attachment  
-            'AttachMulti': 2    # Ambiguous
-        })
-        subsets['attachment'] = attach_subset
-        print(f"Attachment: {len(attach_subset):,} observations")
+        # High vs Multi
+        high_subset = attach_subset[attach_subset['Type'].isin(['AttachHigh', 'AttachMulti'])].copy()
+        high_subset['high_attachment'] = (high_subset['Type'] == 'AttachHigh').astype(int)
+        subsets['attachment_high'] = high_subset
+        
+        # Low vs Multi
+        low_subset = attach_subset[attach_subset['Type'].isin(['AttachLow', 'AttachMulti'])].copy()
+        low_subset['low_attachment'] = (low_subset['Type'] == 'AttachLow').astype(int)
+        subsets['attachment_low'] = low_subset
+
+        print(f"Attachment High vs Multi: {len(high_subset):,} observations")
+        print(f"Attachment Low vs Multi: {len(low_subset):,} observations")
+
     
     # Print summary
     print(f"\nTotal subsets prepared: {len(subsets)}")
@@ -324,9 +331,11 @@ def analyze_all_constructions(subsets):
     
     return all_results
 
+
 def create_comprehensive_plot(results):
     """
-    Create comprehensive plot showing all construction effects
+    Create comprehensive plot showing all construction effects with shared y-axis
+    and specific order.
     """
     print("\n📈 Creating comprehensive visualization...")
     
@@ -353,24 +362,28 @@ def create_comprehensive_plot(results):
     
     plot_df = pd.DataFrame(plot_data)
     
-    # Create subplot for each construction
-    constructions = plot_df['construction'].unique()
-    n_constructions = len(constructions)
+    # Define desired order of constructions
+    construction_order = [
+        'Main Verb/Reduced Relative',
+        'Direct Object/Sentential Complement',
+        'Transitive/Intransitive',
+        'Object vs Subject RC',
+        'High Attachment',
+        'Low Attachment',
+        'Agreement Violation'
+    ]
     
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    axes = axes.flatten()
+    # Subplots: one row per construction, or all in one row if you prefer horizontal
+    n_constructions = len(construction_order)
+    fig, axes = plt.subplots(1, n_constructions, figsize=(4*n_constructions, 6), sharey=True)
     
     regions = ['critical', 'spillover1', 'spillover2']
     colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
     
-    for i, construction in enumerate(constructions):
-        if i >= len(axes):
-            break
-            
+    for i, construction in enumerate(construction_order):
         ax = axes[i]
         construction_data = plot_df[plot_df['construction'] == construction]
         
-        # Plot data for this construction
         effects = []
         ci_lowers = []
         ci_uppers = []
@@ -389,40 +402,36 @@ def create_comprehensive_plot(results):
                 ci_uppers.append(0)
                 significances.append(False)
         
-        # Create bars
+        # Bars
         bars = ax.bar(range(len(regions)), effects, color=colors, alpha=0.7)
         
         # Error bars
         ax.errorbar(range(len(regions)), effects,
-                   yerr=[np.array(effects) - np.array(ci_lowers),
-                         np.array(ci_uppers) - np.array(effects)],
-                   fmt='none', color='black', capsize=5)
+                    yerr=[np.array(effects) - np.array(ci_lowers),
+                          np.array(ci_uppers) - np.array(effects)],
+                    fmt='none', color='black', capsize=5)
         
         # Significance stars
-        for j, (effect, sig) in enumerate(zip(effects, significances)):
-            if sig and effect != 0:
-                height = effect + (ci_uppers[j] - effects[j]) + 2
-                ax.text(j, height, '*', ha='center', va='bottom', 
-                       fontsize=12, fontweight='bold')
+        for j, (effect_val, sig) in enumerate(zip(effects, significances)):
+            if sig and effect_val != 0:
+                height = effect_val + (ci_uppers[j] - effects[j]) + 2
+                ax.text(j, height, '*', ha='center', va='bottom', fontsize=12, fontweight='bold')
         
         # Formatting
         ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
         ax.set_title(construction, fontsize=12, fontweight='bold')
         ax.set_xticks(range(len(regions)))
         ax.set_xticklabels(regions, rotation=45)
-        ax.set_ylabel('Effect Size (ms)')
+        ax.set_ylabel('Effect Size (ms)' if i == 0 else '')
         ax.grid(True, alpha=0.3)
     
-    # Remove empty subplots
-    for i in range(len(constructions), len(axes)):
-        fig.delaxes(axes[i])
-    
     plt.suptitle('SAP Benchmark Effects - All Constructions\n(Log-RT Models)', 
-                fontsize=16, fontweight='bold')
+                 fontsize=16, fontweight='bold')
     plt.tight_layout()
     plt.show()
     
     return fig
+
 
 def create_summary_table(results):
     """
