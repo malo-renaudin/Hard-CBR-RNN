@@ -397,29 +397,28 @@ class Transformer(pl.LightningModule):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
     
-    def create_causal_mask(self, seq_len):
-        """Create causal mask to prevent attention to future tokens"""
-        mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1)
+    def create_causal_mask(self, seq_len, device):
+        mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1)
+        mask = mask.float()                 # ensure float
         mask = mask.masked_fill(mask == 1, float('-inf'))
         return mask
     
     def forward(self, input_ids):
-        seq_len = input_ids.size(0)
-        print('seq_len', seq_len)
-        input_ids=input_ids.transpose(0,1)
+        seq_len, batch_size = input_ids.size()
+        input_ids = input_ids.transpose(0,1)
         # Token embeddings + positional encoding
         x = self.token_embedding(input_ids) * math.sqrt(self.d_model)
-        x = x.transpose(0, 1)  # (seq_len, batch_size, d_model)
+        # x = x.transpose(0, 1)  # (seq_len, batch_size, d_model)
         x = self.pos_encoding(x)
         # x = x.transpose(0, 1)  # (batch_size, seq_len, d_model)
         x = self.dropout(x)
         
         # Create causal mask
-        causal_mask = self.create_causal_mask(seq_len).to(input_ids.device)
+        causal_mask = self.create_causal_mask(seq_len, input_ids.device)
         
         # Pass through transformer blocks
         for block in self.transformer_blocks:
-            x = block(x, causal_mask, self.temperature, self.gumbel_softmax)
+            x = block(x, mask=causal_mask, temperature=self.temperature, gumbel_softmax=self.gumbel_softmax)
         
         # Final layer norm and projection
         x = self.ln_f(x)
