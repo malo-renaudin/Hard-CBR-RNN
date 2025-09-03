@@ -1,3 +1,4 @@
 cbr_lightning/wikitext-103-local/
 tokenizer.pkl
 cbr_lightning/__pycache__
+SPR_dataset/
