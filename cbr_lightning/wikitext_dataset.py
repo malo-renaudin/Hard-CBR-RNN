@@ -244,7 +244,7 @@ def run_sanity_checks(dataset: WikiTextDataset, tokenizer: WordTokenizer, num_sa
 
 
 if __name__ == "__main__":
-    data_path = "/scratch2/mrenaudin/Hard-CBR-RNN/cbr_lightning/wikitext-103-local"  # replace with your local dataset path
+    data_path = "cbr_lightning/wikitext-103-local"  # replace with your local dataset path
     tokenizer_path = "./tokenizer.pkl"
 
     # Initialize data module
