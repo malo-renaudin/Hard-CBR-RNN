@@ -277,12 +277,13 @@ def analyze_all_constructions(subsets):
     
     # Define effect variables for each construction type
     effect_configs = {
-        'MVRR_garden_path': {'var': 'ambiguity', 'name': 'MVRR Garden Path'},
-        'NPZ_garden_path': {'var': 'ambiguity', 'name': 'NPZ Garden Path'},  
-        'NPS_garden_path': {'var': 'ambiguity', 'name': 'NPS Garden Path'},
+        'MVRR_garden_path': {'var': 'ambiguity', 'name': 'Main Verb/Reduced Relative'},
+        'NPZ_garden_path': {'var': 'ambiguity', 'name': 'Transitive/Intransitive'},  
+        'NPS_garden_path': {'var': 'ambiguity', 'name': 'Direct Object/Sentential Complement'},
         'agreement': {'var': 'grammaticality', 'name': 'Agreement Violation'},
         'relative_clause': {'var': 'rc_type', 'name': 'Object vs Subject RC'},
-        'attachment': {'var': 'attachment', 'name': 'Attachment Ambiguity'}
+        'attachment_high': {'var': 'high_attachment', 'name': 'High Attachment'},
+        'attachment_low': {'var': 'low_attachment', 'name': 'Low Attachment'}
     }
     
     for subset_name, subset_data in subsets.items():
