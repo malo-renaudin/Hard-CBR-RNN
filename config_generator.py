@@ -242,7 +242,10 @@ def configure_grid_search():
 def generate_config_combinations(base_config: Dict, grid_params: Dict) -> List[Dict]:
     """Generate all combinations of grid search parameters"""
     if not grid_params:
-        return [base_config]
+        # No grid search - just return single config with experiment name
+        config = base_config.copy()
+        config['experiment_name'] = f"{config['model']['type'].lower()}_run_000"
+        return [config]
     
     # Get all parameter names and their values
     param_names = list(grid_params.keys())
@@ -643,10 +646,165 @@ fi
     return config_files, job_script_path
 
 
+def configure_cross_model_grid_search():
+    """Configure grid search across different models and their parameters"""
+    print("\n" + "="*50)
+    print("CROSS-MODEL GRID SEARCH CONFIGURATION")
+    print("="*50)
+    
+    # Select models to include
+    print("\nSelect models to include in the grid search:")
+    models_to_test = []
+    
+    if ask_question("Include CBR_RNN?", options=["yes", "no"], default="1") == "yes":
+        models_to_test.append("CBR_RNN")
+    
+    if ask_question("Include Transformer?", options=["yes", "no"], default="1") == "yes":
+        models_to_test.append("Transformer")
+    
+    if ask_question("Include LSTM?", options=["yes", "no"], default="2") == "yes":
+        models_to_test.append("LSTM")
+    
+    if not models_to_test:
+        print("No models selected!")
+        return {"models": ["CBR_RNN"]}  # Default fallback
+    
+    grid_params = {"models": models_to_test}
+    
+    print(f"\nSelected models: {', '.join(models_to_test)}")
+    print("\nNow configure parameters to grid search:")
+    
+    # Embedding dimension (ninp for CBR_RNN/Transformer, embedding_dim for LSTM)
+    if ask_question("Grid search embedding dimension?", options=["yes", "no"], default="1") == "yes":
+        grid_params['embedding_dim'] = ask_list_values("Embedding dimensions", int)
+    
+    # Hidden dimension (nhid for CBR_RNN, d_model for Transformer, hidden_dim for LSTM)
+    if ask_question("Grid search hidden dimension?", options=["yes", "no"], default="1") == "yes":
+        grid_params['hidden_dim'] = ask_list_values("Hidden dimensions", int)
+    
+    # Compressed dimension (only for CBR_RNN)
+    if "CBR_RNN" in models_to_test:
+        if ask_question("Grid search compressed dimension (CBR_RNN only)?", options=["yes", "no"], default="1") == "yes":
+            grid_params['compressed_dim'] = ask_list_values("Compressed dimensions", int)
+    
+    # Gumbel softmax (for CBR_RNN and Transformer)
+    if any(model in models_to_test for model in ["CBR_RNN", "Transformer"]):
+        if ask_question("Grid search Gumbel softmax?", options=["yes", "no"], default="1") == "yes":
+            print("Gumbel softmax options:")
+            print("1. Both True and False")
+            print("2. Only True")
+            print("3. Only False")
+            choice = ask_question("Choose", options=["1", "2", "3"], default="1")
+            if choice == "1":
+                grid_params['gumbel_softmax'] = [True, False]
+            elif choice == "2":
+                grid_params['gumbel_softmax'] = [True]
+            else:
+                grid_params['gumbel_softmax'] = [False]
+    
+    # Temperature final (only when Gumbel softmax is True)
+    if grid_params.get('gumbel_softmax', [False]) != [False]:
+        if ask_question("Grid search final temperature?", options=["yes", "no"], default="1") == "yes":
+            grid_params['temp_final'] = ask_list_values("Final temperatures", float)
+    
+    # Learning rate
+    if ask_question("Grid search learning rate?", options=["yes", "no"], default="2") == "yes":
+        grid_params['learning_rate'] = ask_list_values("Learning rates", float)
+    
+    return grid_params
+
+
+def generate_cross_model_configs(basic_settings: Dict, grid_params: Dict) -> List[Dict]:
+    """Generate configurations across different models and parameters"""
+    
+    if 'models' not in grid_params:
+        grid_params['models'] = ['CBR_RNN']  # Default
+    
+    # Separate model list from other parameters
+    models = grid_params.pop('models')
+    
+    # Get all parameter combinations (excluding models)
+    if grid_params:
+        param_names = list(grid_params.keys())
+        param_values = [grid_params[name] for name in param_names]
+        param_combinations = list(itertools.product(*param_values))
+    else:
+        param_combinations = [()]  # Single empty combination
+    
+    configs = []
+    config_id = 0
+    
+    # Generate configs for each model
+    for model_type in models:
+        for combo in param_combinations:
+            # Create parameter dict for this combination
+            param_dict = dict(zip(param_names, combo)) if combo else {}
+            
+            # Create model-specific config
+            model_config = create_model_specific_config(model_type, param_dict)
+            
+            # Create base config
+            config = create_base_config(basic_settings, model_type, model_config)
+            
+            # Add experiment name
+            config['experiment_name'] = f"{model_type.lower()}_run_{config_id:03d}"
+            
+            # Update trainer config if needed
+            if 'learning_rate' in param_dict:
+                config['model']['config']['learning_rate'] = param_dict['learning_rate']
+            
+            configs.append(config)
+            config_id += 1
+    
+    return configs
+
+
+def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
+    """Create model-specific configuration from parameter dictionary"""
+    
+    if model_type == "CBR_RNN":
+        config = {
+            'ninp': param_dict.get('embedding_dim', 256),
+            'nhid': param_dict.get('hidden_dim', 512),
+            'nheads': 4,
+            'compressed_dim': param_dict.get('compressed_dim', 32),
+            'dropout': 0.1,
+            'temperature': 1.0,
+            'gumbel_softmax': param_dict.get('gumbel_softmax', False),
+        }
+        
+        # Add temperature scheduler params if using Gumbel softmax
+        if config['gumbel_softmax']:
+            config['temp_decay_rate'] = 0.95
+            config['temp_final'] = param_dict.get('temp_final', 0.1)
+            
+    elif model_type == "Transformer":
+        config = {
+            'd_model': param_dict.get('hidden_dim', 384),
+            'ninp': param_dict.get('embedding_dim', 384),  # For compatibility
+            'n_heads': 8,
+            'n_layers': 6,
+            'd_ff': param_dict.get('hidden_dim', 384) * 4,
+            'seq_len': 128,
+            'dropout': 0.1,
+            'temperature': 1.0,
+            'gumbel_softmax': param_dict.get('gumbel_softmax', False),
+        }
+        
+    elif model_type == "LSTM":
+        config = {
+            'embedding_dim': param_dict.get('embedding_dim', 256),
+            'hidden_dim': param_dict.get('hidden_dim', 512),
+        }
+    
+    return config
+
+
 def main():
     parser = argparse.ArgumentParser(description='Interactive config generator for language model training')
     parser.add_argument('--output-dir', default='configs', help='Output directory for configs')
-    parser.add_argument('--model-type', choices=['CBR_RNN', 'Transformer', 'LSTM'], help='Model type (skip interactive selection)')
+    parser.add_argument('--single-model', choices=['CBR_RNN', 'Transformer', 'LSTM'], 
+                       help='Generate configs for single model type only')
     
     args = parser.parse_args()
     
@@ -654,33 +812,35 @@ def main():
     print("LANGUAGE MODEL TRAINING - CONFIG GENERATOR")
     print("="*60)
     
-    # Select model type
-    if args.model_type:
-        model_type = args.model_type
+    if args.single_model:
+        # Original single-model workflow
+        model_type = args.single_model
+        print(f"\nConfiguring {model_type} model...")
+        
+        basic_settings = configure_basic_settings()
+        model_config = configure_model_params(model_type)
+        grid_params = configure_grid_search()
+        base_config = create_base_config(basic_settings, model_type, model_config)
+        all_configs = generate_config_combinations(base_config, grid_params)
     else:
-        model_type = ask_question(
-            "Select model type",
-            options=["CBR_RNN", "Transformer", "LSTM"]
-        )
-    
-    print(f"\nConfiguring {model_type} model...")
-    
-    # Configure basic settings
-    basic_settings = configure_basic_settings()
-    
-    # Configure model-specific parameters
-    model_config = configure_model_params(model_type)
-    
-    # Configure grid search
-    grid_params = configure_grid_search()
-    
-    # Create base configuration
-    base_config = create_base_config(basic_settings, model_type, model_config)
-    
-    # Generate all configuration combinations
-    all_configs = generate_config_combinations(base_config, grid_params)
+        # Cross-model workflow
+        print("\nConfiguring cross-model grid search...")
+        
+        basic_settings = configure_basic_settings()
+        grid_params = configure_cross_model_grid_search()
+        all_configs = generate_cross_model_configs(basic_settings, grid_params)
     
     print(f"\nGenerated {len(all_configs)} configuration(s)")
+    
+    # Print summary of what will be tested
+    model_counts = {}
+    for config in all_configs:
+        model_type = config['model']['type']
+        model_counts[model_type] = model_counts.get(model_type, 0) + 1
+    
+    print("\nExperiment summary:")
+    for model_type, count in model_counts.items():
+        print(f"  {model_type}: {count} experiments")
     
     # Save configs and create job script
     config_files, job_script = save_configs_and_create_job_script(all_configs, args.output_dir)
