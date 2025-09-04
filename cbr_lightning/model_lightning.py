@@ -420,7 +420,7 @@ class TransformerBlock(nn.Module):
 
 class Transformer(pl.LightningModule):
     def __init__(self, vocab_size, d_model, n_heads, n_layers, 
-                 d_ff, max_seq_len, dropout, lr, temperature, gumbel_softmax):
+                 d_ff, max_seq_len, dropout, temperature, gumbel_softmax):
         super().__init__()
         self.save_hyperparameters()
         
@@ -548,7 +548,7 @@ class Transformer(pl.LightningModule):
 
 class LSTM(pl.LightningModule):
     def __init__(self, vocab_size, embedding_dim=256, hidden_dim=512, 
-                 num_layers=2, dropout=0.2, lr=1e-3):
+                 num_layers=2, dropout=0.2):
         super().__init__()
         self.save_hyperparameters()
         

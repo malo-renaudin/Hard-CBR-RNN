@@ -728,7 +728,6 @@ def configure_cross_model_grid_search():
     return grid_params
 
 
-
 def generate_cross_model_configs(basic_settings: Dict, grid_params: Dict) -> List[Dict]:
     """Generate configurations across different models and parameters"""
     
@@ -738,19 +737,35 @@ def generate_cross_model_configs(basic_settings: Dict, grid_params: Dict) -> Lis
     # Separate model list from other parameters
     models = grid_params.pop('models')
     
-    # Get all parameter combinations (excluding models)
-    if grid_params:
-        param_names = list(grid_params.keys())
-        param_values = [grid_params[name] for name in param_names]
-        param_combinations = list(itertools.product(*param_values))
-    else:
-        param_combinations = [()]  # Single empty combination
-    
     configs = []
     config_id = 0
     
     # Generate configs for each model
     for model_type in models:
+        # Filter parameters relevant to this model
+        relevant_params = {}
+        for param_name, param_values in grid_params.items():
+            if param_name == 'gumbel_softmax' and model_type == 'LSTM':
+                # Skip Gumbel softmax for LSTM
+                continue
+            elif param_name == 'temp_final' and model_type == 'LSTM':
+                # Skip temperature parameters for LSTM
+                continue
+            elif param_name == 'compressed_dim' and model_type != 'CBR_RNN':
+                # Skip compressed_dim for non-CBR_RNN models
+                continue
+            else:
+                relevant_params[param_name] = param_values
+        
+        # Generate parameter combinations for this model
+        if relevant_params:
+            param_names = list(relevant_params.keys())
+            param_values = [relevant_params[name] for name in param_names]
+            param_combinations = list(itertools.product(*param_values))
+        else:
+            param_combinations = [()]  # Single empty combination
+        
+        # Create configs for this model
         for combo in param_combinations:
             # Create parameter dict for this combination
             param_dict = dict(zip(param_names, combo)) if combo else {}
@@ -779,10 +794,12 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
     
     if model_type == "CBR_RNN":
         config = {
+            'ntoken': 49999,
             'ninp': param_dict.get('embedding_dim', 256),
             'nhid': param_dict.get('hidden_dim', 512),
             'nheads': 4,
-            'compressed_dim': param_dict.get('compressed_dim', 32),
+            'seq_len': 128,  # Required parameter for CBR_RNN
+            'compressed_dim': param_dict.get('compressed_dim', 1),
             'dropout': 0.1,
             'temperature': 1.0,
             'gumbel_softmax': param_dict.get('gumbel_softmax', False),
@@ -795,12 +812,13 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
             
     elif model_type == "Transformer":
         config = {
+            'vocab_size':49999,
             'd_model': param_dict.get('hidden_dim', 384),
-            'ninp': param_dict.get('embedding_dim', 384),  # For compatibility
+            # 'ninp': param_dict.get('embedding_dim', 384),  # For compatibility
             'n_heads': 8,
             'n_layers': 6,
             'd_ff': param_dict.get('hidden_dim', 384) * 4,
-            'seq_len': 128,
+            'max_seq_len': 128,
             'dropout': 0.1,
             'temperature': 1.0,
             'gumbel_softmax': param_dict.get('gumbel_softmax', False),
@@ -808,8 +826,11 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
         
     elif model_type == "LSTM":
         config = {
+            'vocab_size': 49999,
             'embedding_dim': param_dict.get('embedding_dim', 256),
             'hidden_dim': param_dict.get('hidden_dim', 512),
+            'num_layers':2,
+            'dropout':0.1,
         }
     
     return config
