@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 Universal Training Script for CBR_RNN, Transformer, and LSTM models
-with PyTorch Lightning and MLflow integration
+with PyTorch Lightning and simple file-based logging
 """
 
 import os
 import argparse
 import yaml
 import random
+import json
+import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -16,12 +18,73 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
-from pytorch_lightning.loggers import MLFlowLogger
 import datasets
 import pickle
 
 # Import your models
 from model_lightning import CBR_RNN, Transformer, LSTM
+
+
+class SimpleFileLogger:
+    """Simple file-based logger to replace MLflow/TensorBoard"""
+    
+    def __init__(self, experiment_name: str, log_dir: str = "./training_logs"):
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Create experiment directory with timestamp
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.experiment_dir = self.log_dir / f"{experiment_name}_{timestamp}"
+        self.experiment_dir.mkdir(exist_ok=True)
+        
+        # Create log files
+        self.hyperparams_file = self.experiment_dir / "hyperparameters.json"
+        self.metrics_file = self.experiment_dir / "metrics.jsonl"
+        self.experiment_info_file = self.experiment_dir / "experiment_info.txt"
+        
+        print(f"Logging to: {self.experiment_dir}")
+    
+    def log_hyperparams(self, params: Dict[str, Any]):
+        """Log hyperparameters to JSON file"""
+        with open(self.hyperparams_file, 'w') as f:
+            json.dump(params, f, indent=2, default=str)
+        print(f"Hyperparameters logged to: {self.hyperparams_file}")
+    
+    def log_metrics(self, metrics: Dict[str, Any], step: int):
+        """Log metrics to JSONL file"""
+        log_entry = {
+            'step': step,
+            'timestamp': datetime.datetime.now().isoformat(),
+            **metrics
+        }
+        with open(self.metrics_file, 'a') as f:
+            f.write(json.dumps(log_entry, default=str) + '\n')
+    
+    def log_experiment_info(self, info: str):
+        """Log general experiment information"""
+        with open(self.experiment_info_file, 'a') as f:
+            f.write(f"[{datetime.datetime.now().isoformat()}] {info}\n")
+
+
+class SimpleMetricsCallback(pl.Callback):
+    """Callback to log metrics to file"""
+    
+    def __init__(self, logger: SimpleFileLogger):
+        self.logger = logger
+    
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Log training metrics at epoch end"""
+        metrics = {}
+        for key, value in trainer.callback_metrics.items():
+            if isinstance(value, torch.Tensor):
+                metrics[key] = value.item()
+            else:
+                metrics[key] = value
+        
+        if hasattr(pl_module, 'temperature'):
+            metrics['temperature'] = pl_module.temperature
+            
+        self.logger.log_metrics(metrics, trainer.current_epoch)
 
 
 class UniversalDataModule(pl.LightningDataModule):
@@ -147,7 +210,7 @@ class TemperatureSchedulerCallback(pl.Callback):
                 current_temp = pl_module.temp_scheduler.get_temperature()
                 pl_module.temperature = current_temp
                 
-                # Log temperature to our simple logger if available
+                # Log temperature to console
                 print(f"Epoch {trainer.current_epoch}: Temperature = {current_temp:.6f}")
 
 
@@ -219,70 +282,6 @@ class ComprehensiveCheckpointCallback(pl.Callback):
         torch.save(checkpoint_data, filepath)
         
         print(f"Comprehensive checkpoint saved: {filepath}")
-        
-        # Also save a recovery script
-        recovery_script = self._create_recovery_script(filepath, pl_module)
-        recovery_script_path = filepath.with_suffix('.recovery.py')
-        with open(recovery_script_path, 'w') as f:
-            f.write(recovery_script)
-    
-    def _create_recovery_script(self, checkpoint_path: Path, pl_module) -> str:
-        """Create a script to easily resume training from this checkpoint"""
-        script = f'''#!/usr/bin/env python3
-"""
-Auto-generated recovery script for checkpoint: {checkpoint_path.name}
-Run this script to resume training from this exact state.
-"""
-
-import torch
-import random
-import numpy as np
-from pathlib import Path
-
-def load_comprehensive_checkpoint(checkpoint_path: str):
-    """Load comprehensive checkpoint and restore all states"""
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    
-    print(f"Loading checkpoint from epoch {{checkpoint['epoch']}}")
-    print(f"Model type: {{checkpoint['model_type']}}")
-    print(f"Global step: {{checkpoint['global_step']}}")
-    
-    if checkpoint.get('current_temperature') is not None:
-        print(f"Temperature: {{checkpoint['current_temperature']:.4f}}")
-    
-    return checkpoint
-
-def restore_random_states(checkpoint):
-    """Restore all random states for reproducibility"""
-    # PyTorch RNG
-    torch.set_rng_state(checkpoint['pytorch_rng_state'])
-    torch.random.set_rng_state(checkpoint['numpy_rng_state'])
-    
-    # Python RNG
-    random.setstate(checkpoint['python_rng_state'])
-    
-    # CUDA RNG
-    if 'cuda_rng_state' in checkpoint and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
-    
-    print("Random states restored")
-
-if __name__ == "__main__":
-    checkpoint_path = "{checkpoint_path}"
-    checkpoint = load_comprehensive_checkpoint(checkpoint_path)
-    
-    # Instructions for manual recovery
-    print("\\nTo resume training:")
-    print("1. Load your model architecture")
-    print("2. model.load_state_dict(checkpoint['state_dict'])")
-    print("3. Call restore_random_states(checkpoint)")
-    print("4. Restore optimizer states")
-    print("5. Set trainer.current_epoch = checkpoint['epoch']")
-    
-    if checkpoint.get('temp_scheduler_state'):
-        print("6. Restore temperature scheduler state")
-'''
-        return script
 
 
 def create_callbacks(config: Dict[str, Any]) -> list:
@@ -459,7 +458,7 @@ def resume_training_from_comprehensive_checkpoint(checkpoint_path: str, config_p
     # Load checkpoint into model
     load_comprehensive_checkpoint(checkpoint_path, model)
     
-    # Create trainer with simple logging
+    # Create trainer with no external logging
     trainer = pl.Trainer(
         logger=False,  # Disable built-in logger
         callbacks=create_callbacks(config),
@@ -512,13 +511,15 @@ def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
         else:
             print("Warning: Gumbel softmax enabled but no temperature scheduler found!")
     
-    # Create logger
+    # Create simple file logger
     logger_config = config.get('logging', {})
-    logger = MLFlowLogger(
-        experiment_name=logger_config.get('experiment_name', 'language_modeling'),
-        tracking_uri=logger_config.get('tracking_uri', './mlruns'),
-        tags={'model_type': model_type, 'total_params': total_params}
-    )
+    experiment_name = logger_config.get('experiment_name', f'language_modeling_{model_type.lower()}')
+    logger = SimpleFileLogger(experiment_name)
+    
+    # Log experiment info
+    logger.log_experiment_info(f"Starting training for {model_type}")
+    logger.log_experiment_info(f"Total parameters: {total_params:,}")
+    logger.log_experiment_info(f"Vocab size: {data_module.vocab_size}")
     
     # Log hyperparameters
     hyperparams = {
@@ -536,31 +537,9 @@ def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
             'temp_decay_rate': model.temp_scheduler.decay_rate,
             'temp_final': model.temp_scheduler.final_temp
         })
+        logger.log_experiment_info(f"Using temperature scheduler: {model.temp_scheduler.initial_temp} -> {model.temp_scheduler.final_temp}")
     
     logger.log_hyperparams(hyperparams)
-    
-    # Log hyperparameters if logger is available
-    if logger is not None:
-        hyperparams = {
-            'model_type': model_type,
-            'total_params': total_params,
-            'vocab_size': data_module.vocab_size,
-            **model_config,
-            **data_config
-        }
-        
-        # Add temperature scheduler params if applicable
-        if hasattr(model, 'temp_scheduler'):
-            hyperparams.update({
-                'temp_initial': model.temp_scheduler.initial_temp,
-                'temp_decay_rate': model.temp_scheduler.decay_rate,
-                'temp_final': model.temp_scheduler.final_temp
-            })
-        
-        try:
-            logger.log_hyperparams(hyperparams)
-        except Exception as e:
-            print(f"Failed to log hyperparameters: {e}")
     
     # Create callbacks
     callbacks = create_callbacks(config)
@@ -569,10 +548,13 @@ def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
     if hasattr(model, 'temp_scheduler'):
         callbacks.append(TemperatureSchedulerCallback())
     
-    # Create trainer
+    # Add simple metrics callback
+    callbacks.append(SimpleMetricsCallback(logger))
+    
+    # Create trainer (no external logger)
     trainer_config = config.get('trainer', {})
     trainer = pl.Trainer(
-        logger=logger,
+        logger=False,  # Disable built-in logger
         callbacks=callbacks,
         **trainer_config
     )
