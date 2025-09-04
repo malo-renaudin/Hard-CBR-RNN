@@ -1,604 +1,666 @@
 #!/usr/bin/env python3
 """
-Complete Training Script for CBR_RNN on WikiText-103
-with Compression Cache Management, MLflow tracking, and Enhanced Diagnostics
+Universal Training Script for CBR_RNN, Transformer, and LSTM models
+with PyTorch Lightning and MLflow integration
+"""
+
+import os
+import argparse
+import yaml
+import random
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
+from pytorch_lightning.loggers import MLFlowLogger
+import datasets
+import pickle
+
+# Import your models
+from model_lightning import CBR_RNN, Transformer, LSTM
+
+
+class UniversalDataModule(pl.LightningDataModule):
+    """Data module that handles your tokenized dataset"""
+    
+    def __init__(self, dataset_path: str, tokenizer_path: str, batch_size: int = 32, 
+                 num_workers: int = 4, max_length: Optional[int] = None):
+        super().__init__()
+        self.dataset_path = dataset_path
+        self.tokenizer_path = tokenizer_path
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.max_length = max_length
+        
+    def setup(self, stage: Optional[str] = None):
+        # Load dataset
+        self.dataset = datasets.load_from_disk(self.dataset_path)
+        
+        # Load tokenizer
+        with open(self.tokenizer_path, "rb") as f:
+            self.tokenizer = pickle.load(f)
+        
+        self.vocab_size = len(self.tokenizer['word2idx'])
+        
+    def collate_fn(self, batch):
+        """Custom collate function to handle your data format"""
+        input_ids = [item['input_ids'] for item in batch]
+        target_ids = [item['target_ids'] for item in batch]
+        
+        # Convert to tensors and stack
+        input_tensor = torch.stack([torch.tensor(seq, dtype=torch.long) for seq in input_ids])
+        target_tensor = torch.stack([torch.tensor(seq, dtype=torch.long) for seq in target_ids])
+        
+        # Truncate if max_length specified
+        if self.max_length:
+            input_tensor = input_tensor[:, :self.max_length]
+            target_tensor = target_tensor[:, :self.max_length]
+        
+        return input_tensor, target_tensor
+        
+    def train_dataloader(self):
+        return DataLoader(
+            self.dataset['train'], 
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+            persistent_workers=True if self.num_workers > 0 else False
+        )
+    
+    def val_dataloader(self):
+        return DataLoader(
+            self.dataset['validation'],
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+            persistent_workers=True if self.num_workers > 0 else False
+        )
+    
+    def test_dataloader(self):
+        return DataLoader(
+            self.dataset['test'],
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn,
+            persistent_workers=True if self.num_workers > 0 else False
+        )
+
+
+class ModelFactory:
+    """Factory to create models based on configuration"""
+    
+    @staticmethod
+    def create_model(model_type: str, model_config: Dict[str, Any], vocab_size: int) -> pl.LightningModule:
+        """Create model instance based on type and configuration"""
+        
+        model_config = model_config.copy()
+        model_config['ntoken'] = vocab_size  # Add vocab size to config
+        
+        if model_type.upper() == 'CBR_RNN':
+            return CBR_RNN(**model_config)
+            
+        elif model_type.upper() == 'TRANSFORMER':
+            # Map config keys for Transformer
+            transformer_config = {
+                'vocab_size': vocab_size,
+                'd_model': model_config.get('ninp', 256),
+                'n_heads': model_config.get('nheads', 8),
+                'n_layers': model_config.get('n_layers', 6),
+                'd_ff': model_config.get('d_ff', 1024),
+                'max_seq_len': model_config.get('seq_len', 128),
+                'dropout': model_config.get('dropout', 0.1),
+                'learning_rate': model_config.get('learning_rate', 1e-3),
+                'temperature': model_config.get('temperature', 1.0),
+                'gumbel_softmax': model_config.get('gumbel_softmax', False)
+            }
+            return Transformer(**transformer_config)
+            
+        elif model_type.upper() == 'LSTM':
+            # Map config keys for LSTM
+            lstm_config = {
+                'vocab_size': vocab_size,
+                'embedding_dim': model_config.get('ninp', 256),
+                'hidden_dim': model_config.get('nhid', 512),
+                'learning_rate': model_config.get('learning_rate', 1e-3)
+            }
+            return LSTM(**lstm_config)
+            
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+
+
+class TemperatureSchedulerCallback(pl.Callback):
+    """Callback to update temperature scheduler every epoch"""
+    
+    def on_train_epoch_start(self, trainer, pl_module):
+        """Update temperature at the start of each training epoch"""
+        if hasattr(pl_module, 'temp_scheduler') and hasattr(pl_module, 'gumbel_softmax'):
+            if pl_module.gumbel_softmax:
+                pl_module.temp_scheduler.step()
+                current_temp = pl_module.temp_scheduler.get_temperature()
+                pl_module.temperature = current_temp
+                
+                # Log temperature
+                if trainer.logger:
+                    trainer.logger.log_metrics({'temperature': current_temp}, step=trainer.global_step)
+
+
+class ComprehensiveCheckpointCallback(pl.Callback):
+    """Custom callback to save comprehensive checkpoints with all necessary state"""
+    
+    def __init__(self, dirpath: str = "./checkpoints", save_every_epoch: bool = True):
+        self.dirpath = Path(dirpath)
+        self.dirpath.mkdir(parents=True, exist_ok=True)
+        self.save_every_epoch = save_every_epoch
+    
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Save comprehensive checkpoint at the end of each epoch"""
+        if not self.save_every_epoch and trainer.current_epoch % 5 != 0:
+            return  # Only save every 5 epochs if save_every_epoch is False
+        
+        epoch = trainer.current_epoch
+        filename = f"comprehensive_epoch_{epoch:03d}.ckpt"
+        filepath = self.dirpath / filename
+        
+        # Gather all state information
+        checkpoint_data = {
+            # Model state
+            'state_dict': pl_module.state_dict(),
+            'model_config': pl_module.hparams,
+            'model_type': type(pl_module).__name__,
+            
+            # Training state
+            'epoch': epoch,
+            'global_step': trainer.global_step,
+            'lr_schedulers': trainer.lr_scheduler_configs,
+            'optimizer_states': [opt.state_dict() for opt in trainer.optimizers],
+            
+            # Random states for reproducibility
+            'pytorch_rng_state': torch.get_rng_state(),
+            'numpy_rng_state': torch.random.get_rng_state(),
+            'python_rng_state': random.getstate(),
+            
+            # Model-specific states
+            'current_temperature': getattr(pl_module, 'temperature', None),
+            'epoch_cache': getattr(pl_module, 'epoch_cache', None),
+            
+            # Temperature scheduler state (if exists)
+            'temp_scheduler_state': None,
+            
+            # Training metrics
+            'train_loss': trainer.callback_metrics.get('train_loss', None),
+            'val_loss': trainer.callback_metrics.get('val_loss', None),
+            'train_ppl': trainer.callback_metrics.get('train_ppl', None),
+            'val_ppl': trainer.callback_metrics.get('val_ppl', None),
+        }
+        
+        # Save temperature scheduler state if it exists
+        if hasattr(pl_module, 'temp_scheduler'):
+            temp_scheduler = pl_module.temp_scheduler
+            checkpoint_data['temp_scheduler_state'] = {
+                'current_epoch': temp_scheduler.current_epoch,
+                'initial_temp': temp_scheduler.initial_temp,
+                'decay_rate': temp_scheduler.decay_rate,
+                'final_temp': temp_scheduler.final_temp,
+                'current_temp': temp_scheduler.get_temperature()
+            }
+        
+        # CUDA random state if using GPU
+        if torch.cuda.is_available():
+            checkpoint_data['cuda_rng_state'] = torch.cuda.get_rng_state_all()
+        
+        # Save the comprehensive checkpoint
+        torch.save(checkpoint_data, filepath)
+        
+        print(f"Comprehensive checkpoint saved: {filepath}")
+        
+        # Also save a recovery script
+        recovery_script = self._create_recovery_script(filepath, pl_module)
+        recovery_script_path = filepath.with_suffix('.recovery.py')
+        with open(recovery_script_path, 'w') as f:
+            f.write(recovery_script)
+    
+    def _create_recovery_script(self, checkpoint_path: Path, pl_module) -> str:
+        """Create a script to easily resume training from this checkpoint"""
+        script = f'''#!/usr/bin/env python3
+"""
+Auto-generated recovery script for checkpoint: {checkpoint_path.name}
+Run this script to resume training from this exact state.
 """
 
 import torch
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
-from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger, MLFlowLogger
-import argparse
-import os
-import time
-import sys
+import random
+import numpy as np
 from pathlib import Path
-import json
-import psutil
-import gc
-import mlflow
-# Import your modules
-from model_lightning import CBR_RNN, Transformer, LSTM
-from wikitext_dataset import WikiTextDataModule
-from utils import load_model
 
-class ModelDiagnostics:
-    """Class to handle model diagnostics and validation"""
+def load_comprehensive_checkpoint(checkpoint_path: str):
+    """Load comprehensive checkpoint and restore all states"""
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
     
-    @staticmethod
-    def validate_model_architecture(model, vocab_size, seq_len):
-        """Validate model architecture and parameters"""
-        print(f"\n{'='*60}")
-        print("MODEL ARCHITECTURE VALIDATION")
-        print(f"{'='*60}")
-        
-        # Basic parameter counts
-        total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        
-        print(f"Model Type: {type(model).__name__}")
-        print(f"Total Parameters: {total_params:,}")
-        print(f"Trainable Parameters: {trainable_params:,}")
-        print(f"Parameter Memory: {total_params * 4 / 1024**2:.2f} MB (float32)")
-        
-        # Model-specific validations
-        if isinstance(model, CBR_RNN):
-            ModelDiagnostics._validate_cbr_rnn(model, vocab_size, seq_len)
-        elif isinstance(model, Transformer):
-            ModelDiagnostics._validate_transformer(model, vocab_size, seq_len)
-        elif isinstance(model, LSTM):
-            ModelDiagnostics._validate_lstm(model, vocab_size, seq_len)
-        
-        # Memory usage
-        ModelDiagnostics._check_memory_usage()
-        return True
+    print(f"Loading checkpoint from epoch {{checkpoint['epoch']}}")
+    print(f"Model type: {{checkpoint['model_type']}}")
+    print(f"Global step: {{checkpoint['global_step']}}")
     
-    @staticmethod
-    def _validate_cbr_rnn(model, vocab_size, seq_len):
-        """Validate CBR_RNN specific architecture"""
-        print(f"\nCBR_RNN Specific Validation:")
-        print(f"  Vocabulary Size: {vocab_size} (expected: {model.hparams.ntoken})")
-        print(f"  Sequence Length: {seq_len} (model seq_len: {model.seq_len})")
-        print(f"  Compressed Dim: {model.compressed_dim}")
-        print(f"  Compression Ratio: {model.compressed_dim/seq_len:.4f}")
-        print(f"  Hidden Dim: {model.nhid}")
-        print(f"  Attention Heads: {model.nheads}")
-        print(f"  Gumbel Softmax: {model.gumbel_softmax}")
-        print(f"  Temperature: {model.temperature}")
-        
-        # Validate compression layers
-        expected_compress_input = model.nhid * seq_len
-        actual_compress_input = model.hidden_compress.in_features
-        print(f"  Compression layer input: {actual_compress_input} (expected: {expected_compress_input})")
-        
-        if actual_compress_input != expected_compress_input:
-            raise ValueError(f"CBR_RNN compression layer dimension mismatch: "
-                           f"expected {expected_compress_input}, got {actual_compress_input}")
+    if checkpoint.get('current_temperature') is not None:
+        print(f"Temperature: {{checkpoint['current_temperature']:.4f}}")
     
-    @staticmethod
-    def _validate_transformer(model, vocab_size, seq_len):
-        """Validate Transformer specific architecture"""
-        print(f"\nTransformer Specific Validation:")
-        print(f"  Vocabulary Size: {vocab_size} (model vocab_size: {model.vocab_size})")
-        print(f"  Model Dimension: {model.d_model}")
-        print(f"  Layers: {len(model.transformer_blocks)}")
-        print(f"  Max Sequence Length: {model.hparams.max_seq_len}")
-        
-    @staticmethod
-    def _validate_lstm(model, vocab_size, seq_len):
-        """Validate LSTM specific architecture"""
-        print(f"\nLSTM Specific Validation:")
-        print(f"  Vocabulary Size: {vocab_size} (model vocab_size: {model.vocab_size})")
-        print(f"  Embedding Dim: {model.embedding_dim}")
-        print(f"  Hidden Dim: {model.hidden_dim}")
-        print(f"  Num Layers: {model.num_layers}")
-    
-    @staticmethod
-    def _check_memory_usage():
-        """Check current memory usage"""
-        if torch.cuda.is_available():
-            gpu_memory = torch.cuda.memory_allocated() / 1024**2
-            gpu_memory_cached = torch.cuda.memory_reserved() / 1024**2
-            print(f"  GPU Memory Allocated: {gpu_memory:.2f} MB")
-            print(f"  GPU Memory Cached: {gpu_memory_cached:.2f} MB")
-        
-        cpu_memory = psutil.virtual_memory()
-        print(f"  CPU Memory Usage: {cpu_memory.percent:.1f}% "
-              f"({cpu_memory.used / 1024**2:.0f} MB / {cpu_memory.total / 1024**2:.0f} MB)")
-    
-    @staticmethod
-    def test_forward_pass(model, data_module):
-        """Test model forward pass with sample data"""
-        print(f"\n{'='*60}")
-        print("FORWARD PASS VALIDATION")
-        print(f"{'='*60}")
-        
-        model.eval()
-        with torch.no_grad():
-            # Get a sample batch
-            train_loader = data_module.train_dataloader()
-            sample_batch = next(iter(train_loader))
-            inputs, targets = sample_batch
-            
-            print(f"Input shape: {inputs.shape}")
-            print(f"Target shape: {targets.shape}")
-            print(f"Input dtype: {inputs.dtype}")
-            print(f"Input device: {inputs.device}")
-            print(f"Input range: [{inputs.min().item()}, {inputs.max().item()}]")
-            
-            # Test forward pass
-            try:
-                if isinstance(model, CBR_RNN):
-                    cache = model.init_cache(inputs)
-                    print(f"Initial cache shapes: {[tuple(c.shape) for c in cache]}")
-                    outputs, new_cache = model(inputs, initial_cache=cache)
-                    if new_cache is not None:
-                        print(f"Output cache shapes: {[tuple(c.shape) for c in new_cache]}")
-                elif isinstance(model, (Transformer, LSTM)):
-                    outputs = model(inputs)
-                    if isinstance(outputs, tuple):
-                        outputs = outputs[0]
-                
-                print(f"Output shape: {outputs.shape}")
-                print(f"Output dtype: {outputs.dtype}")
-                print(f"Output finite: {torch.isfinite(outputs).all().item()}")
-                print(f"Output range: [{outputs.min().item():.6f}, {outputs.max().item():.6f}]")
-                
-                # Test loss calculation
-                loss_fn = torch.nn.CrossEntropyLoss()
-                loss = loss_fn(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
-                print(f"Sample loss: {loss.item():.6f}")
-                print(f"Sample perplexity: {torch.exp(loss).item():.2f}")
-                
-                print("✅ Forward pass validation PASSED")
-                return True
-                
-            except Exception as e:
-                print(f"❌ Forward pass validation FAILED: {e}")
-                import traceback
-                traceback.print_exc()
-                return False
-        
-            finally:
-                model.train()
+    return checkpoint
 
-class MLflowCallback(pl.Callback):
-    """Custom callback for MLflow logging"""
+def restore_random_states(checkpoint):
+    """Restore all random states for reproducibility"""
+    # PyTorch RNG
+    torch.set_rng_state(checkpoint['pytorch_rng_state'])
+    torch.random.set_rng_state(checkpoint['numpy_rng_state'])
     
-    def on_train_start(self, trainer, pl_module):
-        # Log model architecture details
-        if hasattr(pl_module, 'hparams'):
-            for key, value in pl_module.hparams.items():
-                mlflow.log_param(f"model_{key}", value)
+    # Python RNG
+    random.setstate(checkpoint['python_rng_state'])
     
-    def on_train_epoch_end(self, trainer, pl_module):
-        # Log additional metrics
-        if hasattr(pl_module, 'epoch_cache') and pl_module.epoch_cache is not None:
-            cache_memory = sum(c.numel() * 4 for c in pl_module.epoch_cache) / 1024**2  # MB
-            mlflow.log_metric("cache_memory_mb", cache_memory, step=trainer.current_epoch)
-        
-        # Log GPU memory if available
-        if torch.cuda.is_available():
-            gpu_memory = torch.cuda.memory_allocated() / 1024**2
-            mlflow.log_metric("gpu_memory_mb", gpu_memory, step=trainer.current_epoch)
+    # CUDA RNG
+    if 'cuda_rng_state' in checkpoint and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
+    
+    print("Random states restored")
 
-def create_mlflow_logger(args):
-    """Create MLflow logger with proper experiment setup"""
+if __name__ == "__main__":
+    checkpoint_path = "{checkpoint_path}"
+    checkpoint = load_comprehensive_checkpoint(checkpoint_path)
     
-    # Set MLflow tracking URI if specified
-    if hasattr(args, 'mlflow_tracking_uri') and args.mlflow_tracking_uri:
-        mlflow.set_tracking_uri(args.mlflow_tracking_uri)
+    # Instructions for manual recovery
+    print("\\nTo resume training:")
+    print("1. Load your model architecture")
+    print("2. model.load_state_dict(checkpoint['state_dict'])")
+    print("3. Call restore_random_states(checkpoint)")
+    print("4. Restore optimizer states")
+    print("5. Set trainer.current_epoch = checkpoint['epoch']")
     
-    # Create or get experiment
-    experiment_name = f"wikitext_{args.model.lower()}_{args.experiment_name}"
-    try:
-        experiment_id = mlflow.create_experiment(experiment_name)
-    except mlflow.exceptions.MlflowException:
-        # Experiment already exists
-        experiment_id = mlflow.get_experiment_by_name(experiment_name).experiment_id
-    
-    # Create run name with key parameters
-    run_name = (f"{args.model}_seq{args.sequence_length}_batch{args.batch_size}_"
-                f"lr{args.learning_rate}_nhid{args.nhid}")
-    
-    mlflow_logger = MLFlowLogger(
-        experiment_name=experiment_name,
-        run_name=run_name,
-        tags={
-            "model_type": args.model,
-            "dataset": "wikitext-103",
-            "sequence_length": str(args.sequence_length),
-            "batch_size": str(args.batch_size),
-        }
-    )
-    
-    return mlflow_logger
+    if checkpoint.get('temp_scheduler_state'):
+        print("6. Restore temperature scheduler state")
+'''
+        return script
 
-def create_callbacks(args):
+
+def create_callbacks(config: Dict[str, Any]) -> list:
     """Create PyTorch Lightning callbacks"""
     callbacks = []
     
-    # Model checkpointing
-    checkpoint_callback = ModelCheckpoint(
-        dirpath=os.path.join(args.checkpoint_dir, args.experiment_name),
-        filename=f'{args.model}-{{epoch:02d}}-{{val_loss:.3f}}-{{val_ppl:.2f}}',
-        monitor='val_loss',
-        mode='min',
-        save_top_k=3,
-        save_last=True,
-        every_n_epochs=1,
-        save_weights_only=False,
-        auto_insert_metric_name=False
+    # Comprehensive checkpoint callback (every epoch)
+    checkpoint_config = config.get('checkpoint', {})
+    comprehensive_checkpoint = ComprehensiveCheckpointCallback(
+        dirpath=checkpoint_config.get('dirpath', './checkpoints'),
+        save_every_epoch=checkpoint_config.get('save_every_epoch', True)
     )
-    callbacks.append(checkpoint_callback)
+    callbacks.append(comprehensive_checkpoint)
+    
+    # Standard model checkpoint (best models only)
+    best_model_checkpoint = ModelCheckpoint(
+        dirpath=checkpoint_config.get('dirpath', './checkpoints'),
+        filename='best-{epoch:02d}-{val_loss:.4f}',
+        monitor=checkpoint_config.get('monitor', 'val_loss'),
+        mode=checkpoint_config.get('mode', 'min'),
+        save_top_k=checkpoint_config.get('save_top_k', 3),
+        save_last=False,  # We handle this with comprehensive checkpoints
+        verbose=False
+    )
+    callbacks.append(best_model_checkpoint)
     
     # Early stopping
-    if args.early_stopping:
+    early_stop_config = config.get('early_stopping', {})
+    if early_stop_config.get('enabled', True):
         early_stop_callback = EarlyStopping(
-            monitor='val_loss',
-            min_delta=args.early_stopping_delta,
-            patience=args.patience,
-            mode='min',
+            monitor=early_stop_config.get('monitor', 'val_loss'),
+            mode=early_stop_config.get('mode', 'min'),
+            patience=early_stop_config.get('patience', 10),
             verbose=True
         )
         callbacks.append(early_stop_callback)
     
-    # Learning rate monitoring
-    lr_monitor = LearningRateMonitor(logging_interval='step')
+    # Learning rate monitor
+    lr_monitor = LearningRateMonitor(logging_interval='epoch')
     callbacks.append(lr_monitor)
-    
-    # Custom MLflow callback
-    callbacks.append(MLflowCallback())
     
     return callbacks
 
-def create_loggers(args):
-    """Create loggers for training"""
-    loggers = []
-    
-    # MLflow logger (primary)
-    mlflow_logger = create_mlflow_logger(args)
-    loggers.append(mlflow_logger)
-    
-    # TensorBoard logger (backup)
-    tb_logger = TensorBoardLogger(
-        save_dir=args.log_dir,
-        name=args.experiment_name,
-        version=f"{args.model}_v{args.vocab_size}_{args.sequence_length}_{args.batch_size}"
-    )
-    loggers.append(tb_logger)
-    
-    # CSV logger for easy analysis
-    csv_logger = CSVLogger(
-        save_dir=args.log_dir,
-        name=f"{args.experiment_name}_csv"
-    )
-    loggers.append(csv_logger)
-    
-    return loggers
 
-def create_trainer(args):
-    """Create PyTorch Lightning trainer"""
+def load_comprehensive_checkpoint(checkpoint_path: str, model: pl.LightningModule = None):
+    """
+    Load a comprehensive checkpoint with all training state
     
-    callbacks = create_callbacks(args)
-    loggers = create_loggers(args)
+    Args:
+        checkpoint_path: Path to the comprehensive checkpoint file
+        model: Optional model instance to load state into
+        
+    Returns:
+        Dictionary containing all checkpoint data
+    """
+    print(f"Loading comprehensive checkpoint: {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
     
+    # Print checkpoint info
+    print(f"Checkpoint info:")
+    print(f"  Epoch: {checkpoint['epoch']}")
+    print(f"  Global step: {checkpoint['global_step']}")
+    print(f"  Model type: {checkpoint['model_type']}")
+    
+    if checkpoint.get('current_temperature') is not None:
+        print(f"  Current temperature: {checkpoint['current_temperature']:.6f}")
+    
+    if checkpoint.get('train_loss') is not None:
+        print(f"  Train loss: {checkpoint['train_loss']:.6f}")
+    if checkpoint.get('val_loss') is not None:
+        print(f"  Val loss: {checkpoint['val_loss']:.6f}")
+    
+    # Restore random states for reproducibility
+    restore_random_states(checkpoint)
+    
+    # Load model state if model provided
+    if model is not None:
+        model.load_state_dict(checkpoint['state_dict'])
+        
+        # Restore model-specific state
+        if checkpoint.get('current_temperature') is not None:
+            model.temperature = checkpoint['current_temperature']
+        
+        if checkpoint.get('epoch_cache') is not None:
+            model.epoch_cache = checkpoint['epoch_cache']
+        
+        # Restore temperature scheduler state
+        if checkpoint.get('temp_scheduler_state') and hasattr(model, 'temp_scheduler'):
+            temp_state = checkpoint['temp_scheduler_state']
+            model.temp_scheduler.current_epoch = temp_state['current_epoch']
+            model.temp_scheduler.initial_temp = temp_state['initial_temp']
+            model.temp_scheduler.decay_rate = temp_state['decay_rate']
+            model.temp_scheduler.final_temp = temp_state['final_temp']
+            print(f"  Temperature scheduler restored (epoch {temp_state['current_epoch']})")
+        
+        print("Model state loaded successfully")
+    
+    return checkpoint
+
+
+def restore_random_states(checkpoint: Dict[str, Any]):
+    """Restore all random number generator states for reproducibility"""
+    
+    # PyTorch RNG states
+    if 'pytorch_rng_state' in checkpoint:
+        torch.set_rng_state(checkpoint['pytorch_rng_state'])
+    
+    if 'numpy_rng_state' in checkpoint:
+        torch.random.set_rng_state(checkpoint['numpy_rng_state'])
+    
+    # Python RNG state
+    if 'python_rng_state' in checkpoint:
+        import random
+        random.setstate(checkpoint['python_rng_state'])
+    
+    # CUDA RNG states
+    if 'cuda_rng_state' in checkpoint and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
+    
+    print("Random states restored for reproducibility")
+
+
+def resume_training_from_comprehensive_checkpoint(checkpoint_path: str, config_path: str = None):
+    """
+    Resume training from a comprehensive checkpoint
+    
+    Args:
+        checkpoint_path: Path to comprehensive checkpoint
+        config_path: Optional path to config file (uses checkpoint config if not provided)
+    """
+    
+    # Load checkpoint
+    checkpoint = load_comprehensive_checkpoint(checkpoint_path)
+    
+    # Use config from checkpoint or load from file
+    if config_path:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        print(f"Using config file: {config_path}")
+    else:
+        # Reconstruct config from checkpoint
+        model_config = checkpoint['model_config']
+        config = {
+            'model': {
+                'type': checkpoint['model_type'].replace('CBR_RNN', 'CBR_RNN').replace('Transformer', 'Transformer').replace('LSTM', 'LSTM'),
+                'config': model_config
+            },
+            # Add other necessary config sections...
+            'trainer': {
+                'max_epochs': 100,  # Continue for more epochs
+                'accelerator': 'auto',
+                'devices': 'auto',
+            }
+        }
+        print("Using config reconstructed from checkpoint")
+    
+    # Set up data module (you'll need dataset info)
+    # This assumes your dataset paths are still valid
+    data_config = config.get('data', {
+        'dataset_path': 'cbr_lightning/wikitext-103-tokenized',
+        'tokenizer_path': './tokenizer.pkl',
+        'batch_size': 32,
+        'num_workers': 4
+    })
+    
+    data_module = UniversalDataModule(**data_config)
+    data_module.setup()
+    
+    # Create model with same architecture
+    model_type = config['model']['type']
+    model_config = config['model']['config']
+    model = ModelFactory.create_model(model_type, model_config, data_module.vocab_size)
+    
+    # Load checkpoint into model
+    load_comprehensive_checkpoint(checkpoint_path, model)
+    
+    # Create trainer
     trainer = pl.Trainer(
-        max_epochs=args.epochs,
-        accelerator='auto',
-        devices=args.devices,
-        precision=args.precision,
-        gradient_clip_val=args.clip_grad,
-        accumulate_grad_batches=args.accumulate_grad_batches,
-        log_every_n_steps=args.log_every_n_steps,
-        val_check_interval=args.val_check_interval,
-        callbacks=callbacks,
-        logger=loggers,
-        enable_progress_bar=True,
-        enable_model_summary=True,
-        deterministic=args.deterministic,
-        limit_train_batches=args.limit_train_batches,
-        limit_val_batches=args.limit_val_batches,
-        fast_dev_run=args.fast_dev_run,
-        enable_checkpointing=not args.no_checkpointing
+        logger=MLFlowLogger(
+            experiment_name=f"resumed_{model_type.lower()}",
+            tracking_uri='./mlruns'
+        ),
+        callbacks=create_callbacks(config),
+        **config.get('trainer', {})
     )
-    
-    return trainer
-
-def print_training_summary(args):
-    """Print comprehensive training configuration"""
-    print(f"\n{'='*80}")
-    print(f"TRAINING CONFIGURATION SUMMARY")
-    print(f"{'='*80}")
-    
-    print(f"Experiment: {args.experiment_name}")
-    print(f"Model: {args.model}")
-    print(f"Device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
-    print(f"Precision: {args.precision}")
-    
-    print(f"\nData Configuration:")
-    print(f"  Vocabulary Size: {args.vocab_size:,}")
-    print(f"  Sequence Length: {args.sequence_length}")
-    print(f"  Batch Size: {args.batch_size}")
-    print(f"  Num Workers: {args.num_workers}")
-    
-    print(f"\nModel Configuration:")
-    print(f"  Embedding Dim: {args.ninp}")
-    print(f"  Hidden Dim: {args.nhid}")
-    print(f"  Attention Heads: {args.nheads}")
-    print(f"  Dropout: {args.dropout}")
-    if args.model == 'CBR_RNN':
-        print(f"  Compressed Dim: {args.compressed_dim}")
-        print(f"  Gumbel Softmax: {args.gumbel_softmax}")
-        print(f"  Temperature: {args.temperature}")
-    
-    print(f"\nTraining Configuration:")
-    print(f"  Learning Rate: {args.learning_rate}")
-    print(f"  Weight Decay: {args.weight_decay}")
-    print(f"  Optimizer: {args.optimizer_type}")
-    print(f"  Scheduler: {args.scheduler_type}")
-    print(f"  Epochs: {args.epochs}")
-    print(f"  Gradient Clipping: {args.clip_grad}")
-    print(f"  Accumulate Grad Batches: {args.accumulate_grad_batches}")
-    
-    print(f"\nLogging Configuration:")
-    print(f"  Log Directory: {args.log_dir}")
-    print(f"  Checkpoint Directory: {args.checkpoint_dir}")
-    print(f"  Log Every N Steps: {args.log_every_n_steps}")
-    print(f"  Validation Check Interval: {args.val_check_interval}")
-    
-    if args.early_stopping:
-        print(f"\nEarly Stopping:")
-        print(f"  Patience: {args.patience}")
-        print(f"  Min Delta: {args.early_stopping_delta}")
-    
-    print(f"{'='*80}")
-
-def main():
-    parser = argparse.ArgumentParser(description='Train models on WikiText-103 with MLflow tracking')
-    
-    # Data parameters
-    parser.add_argument('--model', type=str, default='CBR_RNN', 
-                        choices=['CBR_RNN', 'Transformer', 'LSTM'])
-    parser.add_argument('--vocab_size', type=int, default=50000)
-    parser.add_argument('--sequence_length', type=int, default=35)
-    parser.add_argument('--batch_size', type=int, default=256)
-    parser.add_argument('--max_val_samples', type=int, default=2000)
-    parser.add_argument('--tokenizer_path', type=str, default = './tokenizer.pkl')
-    parser.add_argument('--tokenized_path', type=str, default = 'cbr_lightning/wikitext-103-tokenized')
-    
-    # Model architecture parameters
-    parser.add_argument('--ninp', type=int, default=512)
-    parser.add_argument('--nhid', type=int, default=1024)
-    parser.add_argument('--nheads', type=int, default=1)
-    parser.add_argument('--dropout', type=float, default=0.1)
-    parser.add_argument('--compressed_dim', type=int, default=1)
-    
-    # Gumbel Softmax parameters
-    parser.add_argument('--gumbel_softmax', action='store_true')
-    parser.add_argument('--temperature', type=float, default=1.0)
-    
-    # Training parameters
-    parser.add_argument('--learning_rate', type=float, default=1e-4)
-    parser.add_argument('--weight_decay', type=float, default=1e-4)
-    parser.add_argument('--optimizer_type', type=str, default='adamw', choices=['adamw', 'sgd'])
-    parser.add_argument('--scheduler_type', type=str, default='cosine', choices=['cosine', 'step', 'plateau'])
-    
-    # Training setup
-    parser.add_argument('--epochs', type=int, default=20)
-    parser.add_argument('--devices', type=int, default=1)
-    parser.add_argument('--precision', type=str, default='16-mixed')
-    parser.add_argument('--clip_grad', type=float, default=1.0)
-    parser.add_argument('--accumulate_grad_batches', type=int, default=1)
-    
-    # MLflow configuration
-    parser.add_argument('--mlflow_tracking_uri', type=str, default=None,
-                       help='MLflow tracking server URI')
-    parser.add_argument('--mlflow_experiment', type=str, default='wikitext_experiments',
-                       help='MLflow experiment name')
-    
-    # Logging and checkpointing
-    parser.add_argument('--experiment_name', type=str, default='model_comparison')
-    parser.add_argument('--log_dir', type=str, default='lightning_logs')
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints')
-    parser.add_argument('--log_every_n_steps', type=int, default=100)
-    parser.add_argument('--val_check_interval', type=float, default=1.0)
-    
-    # Early stopping
-    parser.add_argument('--early_stopping', action='store_true')
-    parser.add_argument('--patience', type=int, default=7)
-    parser.add_argument('--early_stopping_delta', type=float, default=0.001)
-    
-    # Testing/debugging
-    parser.add_argument('--limit_train_batches', type=float, default=1.0)
-    parser.add_argument('--limit_val_batches', type=float, default=1.0)
-    parser.add_argument('--num_workers', type=int, default=4)
-    parser.add_argument('--fast_dev_run', action='store_true')
-    parser.add_argument('--deterministic', action='store_true')
-    parser.add_argument('--no_checkpointing', action='store_true')
     
     # Resume training
-    parser.add_argument('--resume_from_checkpoint', type=str, default=None)
+    print("Resuming training...")
+    trainer.fit(model, datamodule=data_module)
     
-    # Validation flags
-    parser.add_argument('--skip_validation', action='store_true', help='Skip model validation')
-    parser.add_argument('--skip_forward_test', action='store_true', help='Skip forward pass test')
+    return model, trainer
+
+
+def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
+    """Main training function"""
+    
+    # Load configuration
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    print(f"Configuration loaded from: {config_path}")
+    
+    # Set random seed
+    if 'seed' in config:
+        pl.seed_everything(config['seed'])
+    
+    # Create data module
+    data_config = config['data']
+    data_module = UniversalDataModule(**data_config)
+    data_module.setup()
+    
+    print(f"Dataset loaded. Vocab size: {data_module.vocab_size}")
+    
+    # Create model
+    model_type = config['model']['type']
+    model_config = config['model']['config']
+    model = ModelFactory.create_model(model_type, model_config, data_module.vocab_size)
+    
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Model created: {model_type}")
+    print(f"Total parameters: {total_params:,}")
+    
+    # Print temperature scheduler info if using Gumbel softmax
+    if hasattr(model, 'gumbel_softmax') and model.gumbel_softmax:
+        if hasattr(model, 'temp_scheduler'):
+            print(f"Using temperature scheduler:")
+            print(f"  Initial temperature: {model.temp_scheduler.initial_temp}")
+            print(f"  Decay rate: {model.temp_scheduler.decay_rate}")
+            print(f"  Final temperature: {model.temp_scheduler.final_temp}")
+        else:
+            print("Warning: Gumbel softmax enabled but no temperature scheduler found!")
+    
+    # Create logger
+    logger_config = config.get('logging', {})
+    logger = MLFlowLogger(
+        experiment_name=logger_config.get('experiment_name', 'language_modeling'),
+        tracking_uri=logger_config.get('tracking_uri', './mlruns'),
+        tags={'model_type': model_type, 'total_params': total_params}
+    )
+    
+    # Log hyperparameters
+    hyperparams = {
+        'model_type': model_type,
+        'total_params': total_params,
+        'vocab_size': data_module.vocab_size,
+        **model_config,
+        **data_config
+    }
+    
+    # Add temperature scheduler params if applicable
+    if hasattr(model, 'temp_scheduler'):
+        hyperparams.update({
+            'temp_initial': model.temp_scheduler.initial_temp,
+            'temp_decay_rate': model.temp_scheduler.decay_rate,
+            'temp_final': model.temp_scheduler.final_temp
+        })
+    
+    logger.log_hyperparams(hyperparams)
+    
+    # Create callbacks
+    callbacks = create_callbacks(config)
+    
+    # Add temperature scheduler callback if needed
+    if hasattr(model, 'temp_scheduler'):
+        callbacks.append(TemperatureSchedulerCallback())
+    
+    # Create trainer
+    trainer_config = config.get('trainer', {})
+    trainer = pl.Trainer(
+        logger=logger,
+        callbacks=callbacks,
+        **trainer_config
+    )
+    
+    print("Starting training...")
+    
+    # Train model
+    trainer.fit(
+        model, 
+        datamodule=data_module,
+        ckpt_path=resume_from_checkpoint
+    )
+    
+    # Test model
+    if config.get('run_test', True):
+        print("Running test...")
+        trainer.test(model, datamodule=data_module)
+    
+    print("Training completed!")
+    
+    # Save final model
+    save_path = Path(config.get('save_path', './final_model.ckpt'))
+    trainer.save_checkpoint(save_path)
+    print(f"Final model saved to: {save_path}")
+
+
+def test_model_creation(config_path: str):
+    """Test function to verify model creation and basic forward pass"""
+    print("Running model creation test...")
+    
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Mock vocab size for testing
+    test_vocab_size = 10000
+    
+    try:
+        # Test model creation
+        model_type = config['model']['type']
+        model_config = config['model']['config']
+        
+        print(f"Testing {model_type} model creation...")
+        model = ModelFactory.create_model(model_type, model_config, test_vocab_size)
+        
+        # Count parameters
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        
+        print(f"Model created successfully!")
+        print(f"Total parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,}")
+        
+        # Test forward pass with dummy data
+        batch_size = 2
+        seq_len = model_config.get('seq_len', 128)
+        
+        # Create dummy input (seq_len, batch_size) format
+        dummy_input = torch.randint(0, test_vocab_size, (seq_len, batch_size))
+        dummy_targets = torch.randint(0, test_vocab_size, (seq_len, batch_size))
+        
+        print(f"Testing forward pass with input shape: {dummy_input.shape}")
+        
+        model.eval()
+        with torch.no_grad():
+            if model_type.upper() == 'CBR_RNN':
+                cache = model.init_cache(dummy_input)
+                output, _ = model(dummy_input, initial_cache=cache)
+                print(f"CBR_RNN output shape: {output.shape}")
+                
+            elif model_type.upper() == 'TRANSFORMER':
+                # Transformer expects (batch, seq) format
+                dummy_input_transposed = dummy_input.transpose(0, 1)
+                output = model(dummy_input_transposed)
+                print(f"Transformer output shape: {output.shape}")
+                
+            elif model_type.upper() == 'LSTM':
+                # LSTM expects (batch, seq) format
+                dummy_input_transposed = dummy_input.transpose(0, 1)
+                output, _ = model(dummy_input_transposed)
+                print(f"LSTM output shape: {output.shape}")
+        
+        print("Forward pass test successful!")
+        return True
+        
+    except Exception as e:
+        print(f"Test failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Universal model training script')
+    parser.add_argument('--config', type=str, required=True, help='Path to config YAML file')
+    parser.add_argument('--test-only', action='store_true', help='Only run model creation test')
+    parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint path')
+    parser.add_argument('--resume-comprehensive', type=str, default=None, 
+                       help='Resume from comprehensive checkpoint (includes all training state)')
     
     args = parser.parse_args()
     
-    # Print configuration
-    print_training_summary(args)
-    
-    # Set random seed for reproducibility
-    if args.deterministic:
-        pl.seed_everything(42, workers=True)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    
-    # Create directories
-    os.makedirs(args.log_dir, exist_ok=True)
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
-    
-    try:
-        # Set up data module with enhanced validation
-        print(f"\n{'='*60}")
-        print("DATA MODULE SETUP")
-        print(f"{'='*60}")
-        
-        # Load tokenizer first
-        print(f"Loading tokenizer from: {args.tokenizer_path}")
-        import pickle
-        with open(args.tokenizer_path, 'rb') as f:
-            tokenizer = pickle.load(f)
-        
-        # Handle different tokenizer formats
-        if isinstance(tokenizer, dict):
-            vocab_size = len(tokenizer['word2idx'])
-        else:
-            vocab_size = len(tokenizer.word2idx) if hasattr(tokenizer, 'word2idx') else getattr(tokenizer, 'vocab_size', None)
-        
-        print(f"✅ Tokenizer loaded. Vocabulary size: {vocab_size:,}")
-        
-        # Create data module
-        data_module = WikiTextDataModule(
-            tokenized_path=args.tokenized_path,
-            tokenizer=tokenizer,
-            sequence_length=128,
-            stride=32,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-        )
-
-        # Setup data module
-        data_module.setup('fit')
-        
-        print(f"✅ Training samples: {len(data_module.train_dataset):,}")
-        print(f"✅ Validation samples: {len(data_module.val_dataset):,}")
-        
-        # Run sanity checks if available
-        if hasattr(data_module, 'run_sanity_checks'):
-            print(f"\nRunning data module sanity checks...")
-            try:
-                data_module.run_sanity_checks()
-            except Exception as e:
-                print(f"⚠️ Sanity checks failed: {e}")
-                print("Continuing without sanity checks...")
-        
-        # Validate data integrity
-        print(f"\nValidating data integrity...")
-        train_loader = data_module.train_dataloader()
-        batch = next(iter(train_loader))
-        inputs, targets = batch
-        
-        print(f"✅ Input shape: {inputs.shape}")
-        print(f"✅ Target shape: {targets.shape}")
-        print(f"✅ Input range: [{inputs.min().item()}, {inputs.max().item()}]")
-        print(f"✅ Target range: [{targets.min().item()}, {targets.max().item()}]")
-        
-        # Check for out-of-bounds tokens
-        if inputs.max().item() >= vocab_size or inputs.min().item() < 0:
-            raise ValueError(f"Input tokens out of bounds: range=[{inputs.min().item()}, {inputs.max().item()}], vocab_size={vocab_size}")
-        if targets.max().item() >= vocab_size or targets.min().item() < 0:
-            raise ValueError(f"Target tokens out of bounds: range=[{targets.min().item()}, {targets.max().item()}], vocab_size={vocab_size}")
-        
-        print("✅ All token IDs are within vocabulary bounds")
-        
-        # Create model
-        print(f"\n{'='*60}")
-        print("MODEL CREATION")
-        print(f"{'='*60}")
-        
-        model = load_model(args, vocab_size)
-        print(f"✅ Model created: {type(model).__name__}")
-        
-        # Model validation
-        if not args.skip_validation:
-            ModelDiagnostics.validate_model_architecture(model, vocab_size, args.sequence_length)
-        
-        # Forward pass test
-        if not args.skip_forward_test:
-            success = ModelDiagnostics.test_forward_pass(model, data_module)
-            if not success:
-                print("❌ Forward pass test failed. Aborting training.")
-                sys.exit(1)
-        
-        # Create trainer
-        trainer = create_trainer(args)
-        
-        # Log initial system state
-        print(f"\n{'='*60}")
-        print("SYSTEM STATE")
-        print(f"{'='*60}")
-        ModelDiagnostics._check_memory_usage()
-        
-        # Start MLflow run
-        with mlflow.start_run(run_name=f"{args.model}_{int(time.time())}"):
-            # Log all arguments as parameters
-            for key, value in vars(args).items():
-                mlflow.log_param(key, value)
-            
-            # Log system info
-            mlflow.log_param("python_version", sys.version)
-            mlflow.log_param("torch_version", torch.__version__)
-            mlflow.log_param("lightning_version", pl.__version__)
-            mlflow.log_param("cuda_available", torch.cuda.is_available())
-            if torch.cuda.is_available():
-                mlflow.log_param("cuda_device_name", torch.cuda.get_device_name())
-            
-            # Train model
-            print(f"\n{'='*80}")
-            print("STARTING TRAINING")
-            print(f"{'='*80}")
-            start_time = time.time()
-            
-            if args.resume_from_checkpoint:
-                print(f"Resuming from checkpoint: {args.resume_from_checkpoint}")
-                trainer.fit(model, data_module, ckpt_path=args.resume_from_checkpoint)
-            else:
-                trainer.fit(model, data_module)
-            
-            training_time = time.time() - start_time
-            
-            # Log final metrics
-            mlflow.log_metric("training_time_minutes", training_time / 60)
-            mlflow.log_metric("final_train_loss", trainer.callback_metrics.get('train_loss', float('inf')))
-            mlflow.log_metric("final_val_loss", trainer.callback_metrics.get('val_loss', float('inf')))
-            
-            print(f"\n{'='*80}")
-            print("TRAINING COMPLETED")
-            print(f"{'='*80}")
-            print(f"Training time: {training_time/60:.2f} minutes")
-            print(f"Final train loss: {trainer.callback_metrics.get('train_loss', 'N/A')}")
-            print(f"Final validation loss: {trainer.callback_metrics.get('val_loss', 'N/A')}")
-            print(f"Final validation perplexity: {trainer.callback_metrics.get('val_ppl', 'N/A')}")
-            
-            # Save final model
-            if not args.no_checkpointing:
-                final_model_path = os.path.join(args.checkpoint_dir, args.experiment_name, f'final_{args.model}.ckpt')
-                trainer.save_checkpoint(final_model_path)
-                mlflow.log_artifact(final_model_path)
-                print(f"Final model saved and logged to MLflow: {final_model_path}")
-            
-            print(f"{'='*80}")
-        
-    except KeyboardInterrupt:
-        print(f"\n{'='*50}")
-        print("Training interrupted by user")
-        print(f"{'='*50}")
-        
-    except Exception as e:
-        print(f"\n{'='*50}")
-        print(f"Training failed with error: {e}")
-        print(f"{'='*50}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-    
-    finally:
-        # Cleanup
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
-
-if __name__ == "__main__":
-    main()
+    if args.test_only:
+        success = test_model_creation(args.config)
+        exit(0 if success else 1)
+    elif args.resume_comprehensive:
+        # Resume from comprehensive checkpoint
+        resume_training_from_comprehensive_checkpoint(args.resume_comprehensive, args.config)
+    else:
+        # Normal training or resume from standard Lightning checkpoint
+        train_model(args.config, args.resume)
