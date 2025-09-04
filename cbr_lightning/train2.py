@@ -460,12 +460,9 @@ def resume_training_from_comprehensive_checkpoint(checkpoint_path: str, config_p
     # Load checkpoint into model
     load_comprehensive_checkpoint(checkpoint_path, model)
     
-    # Create trainer
+    # Create trainer with simple logging
     trainer = pl.Trainer(
-        logger=MLFlowLogger(
-            experiment_name=f"resumed_{model_type.lower()}",
-            tracking_uri='./mlruns'
-        ),
+        logger=False,  # Disable built-in logger
         callbacks=create_callbacks(config),
         **config.get('trainer', {})
     )
