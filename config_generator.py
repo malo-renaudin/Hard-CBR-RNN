@@ -377,7 +377,7 @@ timeout_handler() {{
         wait $TRAINING_PID
     fi
     # Mark job as timed out for relaunch
-    echo "TIMEOUT" > "status/job_${{SLURM_ARRAY_TASK_ID}}.status"
+    echo "TIMEOUT" > "configs/status/job_${{SLURM_ARRAY_TASK_ID}}.status"
     exit 124  # Standard timeout exit code
 }}
 
@@ -834,6 +834,7 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
         }
     
     return config
+
 
 def main():
     parser = argparse.ArgumentParser(description='Interactive config generator for language model training')
