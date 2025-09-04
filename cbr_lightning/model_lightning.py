@@ -69,6 +69,13 @@ class CBR_RNN(pl.LightningModule):
         self.key_compress_norm = nn.LayerNorm(nhid * compressed_dim)
         self.value_compress_norm = nn.LayerNorm(nhid * compressed_dim)
         
+        # self.hidden_compress = nn.Linear(nhid * seq_len, nhid * compressed_dim)
+        # self.key_compress = nn.Linear(nhid * seq_len, nhid * compressed_dim) 
+        # self.value_compress = nn.Linear(nhid * seq_len, nhid * compressed_dim)
+        
+        # self.hidden_compress_norm = nn.LayerNorm(nhid * compressed_dim)
+        # self.key_compress_norm = nn.LayerNorm(nhid * compressed_dim)
+        # self.value_compress_norm = nn.LayerNorm(nhid * compressed_dim)
         # Training hyperparameters
         self.learning_rate = learning_rate
         self.temperature = temperature
@@ -87,9 +94,9 @@ class CBR_RNN(pl.LightningModule):
                 if "norm" in name:
                     nn.init.ones_(param)
                 elif "encoder" in name:
-                    nn.init.normal_(param, mean=0, std=0.01)
+                    nn.init.normal_(param, mean=0, std=0.1)
                 elif "decoder" in name:
-                    nn.init.normal_(param, mean=0, std=0.01)
+                    nn.init.normal_(param, mean=0, std=0.1)
                 elif "compress" in name:
                     nn.init.xavier_uniform_(param)
                 else:
@@ -104,9 +111,9 @@ class CBR_RNN(pl.LightningModule):
         else:
             bsz = 1
 
-        hidden = torch.zeros(self.compressed_dim, bsz, self.nhid).to(self.device) 
-        key_cache = torch.zeros(bsz, self.compressed_dim, self.nhid).to(self.device) 
-        value_cache = torch.zeros(bsz, self.compressed_dim, self.nhid).to(self.device) 
+        hidden = torch.zeros(self.compressed_dim, bsz, self.nhid, device=self.device) 
+        key_cache = torch.zeros(bsz, self.compressed_dim, self.nhid, device=self.device) 
+        value_cache = torch.zeros(bsz, self.compressed_dim, self.nhid, device=self.device) 
         return hidden, key_cache, value_cache
 
     def update_cache(self, key_cache, value_cache, hidden, key_cache_i, value_cache_i, hidden_i):
@@ -123,22 +130,34 @@ class CBR_RNN(pl.LightningModule):
         """
         Learned projection from [bsz, seq_len, nhid] to [bsz, compressed_dim, nhid]
         """
+        print(f"DEBUG compress_cache:")
+        print(f"  hidden shape: {hidden.shape}")
+        print(f"  key_cache shape: {key_cache.shape}")
+        print(f"  value_cache shape: {value_cache.shape}")
         # For hidden: [seq_len, batch, nhid] -> [batch, seq_len, nhid] -> [batch, compressed_dim, nhid] -> [compressed_dim, batch, nhid]
         hidden_reshaped = hidden.transpose(0, 1)  # [batch, seq_len, nhid]
         batch_size, seq_len, nhid = hidden_reshaped.shape
-
-        hidden_flat = hidden_reshaped .reshape(batch_size, -1) 
+        print(f"  hidden_reshaped: {hidden_reshaped.shape}")
+        print(f"  compressed_dim: {self.compressed_dim}, seq_len: {self.seq_len}")
+        hidden_new = hidden_reshaped
+        print(f"  hidden_new shape: {hidden_new.shape}")
+        print(f"  expected flatten size: {hidden_new.shape[1] * hidden_new.shape[2]}")
+        print(f"  compression layer expects: {self.hidden_compress.in_features}")
+    
+        hidden_flat = hidden_new.reshape(batch_size, -1) 
+        print('hidden_flat', hidden_flat.shape)
+        print('self.hidden_compress(hidden_flat)', self.hidden_compress(hidden_flat))
         hidden_proj = self.drop(self.tanh(self.hidden_compress_norm(self.hidden_compress(hidden_flat))))  # [batch, nhid * compressed_dim]
         hidden_compressed = hidden_proj.reshape(batch_size, self.compressed_dim, nhid)  # [batch, compressed_dim, nhid]
         hidden_compressed = hidden_compressed.transpose(0, 1)  # [compressed_dim, batch, nhid]
         
-        
-        key_flat = key_cache.reshape(batch_size, -1)  # [batch, seq_len * nhid]
+        key_new = key_cache
+        key_flat = key_new.reshape(batch_size, -1)  # [batch, seq_len * nhid]
         key_proj = self.drop(self.tanh(self.key_compress_norm(self.key_compress(key_flat))))  # [batch, nhid * compressed_dim]
         key_compressed = key_proj.reshape(batch_size, self.compressed_dim, nhid)  # [batch, compressed_dim, nhid]
         
-        
-        value_flat = value_cache.reshape(batch_size, -1)  # [batch, seq_len * nhid]
+        value_new = value_cache
+        value_flat = value_new.reshape(batch_size, -1)  # [batch, seq_len * nhid]
         value_proj = self.drop(self.tanh(self.value_compress_norm(self.value_compress(value_flat))))  # [batch, nhid * compressed_dim]
         value_compressed = value_proj.reshape(batch_size, self.compressed_dim, nhid)  # [batch, compressed_dim, nhid]
         
@@ -165,11 +184,12 @@ class CBR_RNN(pl.LightningModule):
 
     def forward(self, observation, initial_cache=None, nheads=None, temperature=None, gumbel_softmax=None):
         # Use instance variables if not provided
-        nheads = nheads if nheads is not None else self.nheads
-        temperature = temperature if temperature is not None else self.temperature
-        gumbel_softmax = gumbel_softmax if gumbel_softmax is not None else self.gumbel_softmax
+        # nheads = nheads if nheads is not None else self.nheads
+        # temperature = temperature if temperature is not None else self.temperature
+        # gumbel_softmax = gumbel_softmax if gumbel_softmax is not None else self.gumbel_softmax
         
         seq_len = observation.size(0)
+        print('seq_len', seq_len)
     
         if initial_cache is not None:
             hidden, key_cache, value_cache = initial_cache
@@ -181,12 +201,17 @@ class CBR_RNN(pl.LightningModule):
         emb = self.drop(self.encoder(observation))
         for i in range(seq_len):
             query = self.get_query(emb[i], hidden)
+            print('query', query.shape)
             attn_output,_= self.multihead_attn(query, key_cache, value_cache, temperature, gumbel_softmax, need_weights=False)
             attn_output, query=attn_output.squeeze(1), query.squeeze(1)
+            print('attn_output', attn_output.shape)
             key_cache_i, value_cache_i, hidden_i = self.intermediate_layers(i, emb, query, attn_output, hidden)
             key_cache, value_cache, hidden = self.update_cache(key_cache, value_cache, hidden, key_cache_i, value_cache_i, hidden_i)
         # decoded = self.decoder(hidden[1:])
-        decoded = self.decoder(hidden[:self.seq_len])
+        print('hidden final', hidden.shape)
+        print('hidden[-self.seq_len:]', hidden[-self.seq_len:].shape)
+        decoded = self.decoder(hidden[-self.seq_len:])
+        print('decoded', decoded.shape)
         cache = self.compress_cache(hidden, key_cache, value_cache)
         return decoded, cache
     
@@ -195,23 +220,32 @@ class CBR_RNN(pl.LightningModule):
         if self.gumbel_softmax:
            self.temp_scheduler.step()
            self.temperature = self.temp_scheduler.get_temperature()
-            
+           
+    def on_train_epoch_end(self):
+        """Reset cache at the end of each epoch"""
+        self.epoch_cache = None
+        
     def training_step(self, batch, batch_idx):
         # Extract data and targets from batch
         data, targets = batch
+        print('data', data.shape)
         # Initialize cache once per epoch or use existing epoch cache
+        # if self.epoch_cache is None:
+        #     # Initialize cache once per epoch
+        #     self.epoch_cache = tuple(c.detach().clone() for c in self.init_cache(data))
+        # else:
+        #     # Detach from computational graph but keep values
+        #     hidden, key_cache, value_cache = self.epoch_cache
+        #     self.epoch_cache = (
+        #         hidden.clone(),
+        #         key_cache.clone(), 
+        #         value_cache.clone()
+        #     )
         if self.epoch_cache is None:
-            # Initialize cache once per epoch
             self.epoch_cache = self.init_cache(data)
-        else:
-            # Detach from computational graph but keep values
-            hidden, key_cache, value_cache = self.epoch_cache
-            self.epoch_cache = (
-                hidden.detach().clone(),
-                key_cache.detach().clone(), 
-                value_cache.detach().clone()
-            )
         
+        # # Use the persistent cache but ensure gradients can flow
+        # cache = self.epoch_cache
         
         # Forward pass
         output, new_cache = self.forward(
@@ -223,7 +257,7 @@ class CBR_RNN(pl.LightningModule):
         )
         
         if new_cache is not None:
-            self.epoch_cache = tuple(c.detach() for c in new_cache)
+            self.epoch_cache = tuple(c.detach().clone() for c in new_cache)
             
         
         # Reshape outputs and targets for loss computation
@@ -560,7 +594,7 @@ class LSTM(pl.LightningModule):
         
         # Project to vocabulary size
         logits = self.output_projection(lstm_out)  # (batch_size, seq_len, vocab_size)
-        
+        logits = logits.transpose(0,1)
         return logits, hidden
     
     def training_step(self, batch, batch_idx):

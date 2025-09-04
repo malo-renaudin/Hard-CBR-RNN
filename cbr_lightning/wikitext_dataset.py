@@ -98,7 +98,7 @@ class TokenizedTextDataset(Dataset):
 
         print("--- END OF REPORT ---\n")
 
-class WikiTextLightningDataModule(pl.LightningDataModule):
+class WikiTextDataModule(pl.LightningDataModule):
     """PyTorch Lightning DataModule for tokenized Wikitext."""
 
     def __init__(self, tokenized_path: str, tokenizer, sequence_length=128, stride=64,
@@ -174,12 +174,12 @@ if __name__ == "__main__":
     tokenizer_path = "./tokenizer.pkl"
     
 
-    from cbr_lightning.word_tok import WordTokenizer  # your local tokenizer.py
+    from word_tok import WordTokenizer  # your local tokenizer.py
 
     tokenizer = WordTokenizer()
     tokenizer.load(tokenizer_path)
 
 
-    dm = WikiTextLightningDataModule(tokenized_path=tokenized_dataset_path, tokenizer=tokenizer)
+    dm = WikiTextDataModule(tokenized_path=tokenized_dataset_path, tokenizer=tokenizer)
     dm.setup('fit')
     dm.run_sanity_checks()
