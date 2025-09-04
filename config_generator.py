@@ -400,7 +400,13 @@ echo "STARTED" > "$STATUS_FILE"
 # Load modules and activate conda environment
 module purge
 module load pytorch-gpu/py3/2.1.1
-source activate leaps3
+
+# Jean Zay conda setup
+source /gpfslocalsup/pub/anaconda-py3/2023.09/etc/profile.d/conda.sh
+conda activate leaps3
+
+# Change to parent directory to run training script
+cd ..
 
 # Function to find latest comprehensive checkpoint
 find_latest_checkpoint() {{
@@ -418,10 +424,10 @@ LATEST_CHECKPOINT=$(find_latest_checkpoint)
 if [[ -n "$LATEST_CHECKPOINT" && -f "$LATEST_CHECKPOINT" ]]; then
     echo "Found existing checkpoint: $LATEST_CHECKPOINT"
     echo "Resuming training from checkpoint..."
-    python ../cbr_lightning/train2.py --config "$CONFIG" --resume-comprehensive "$LATEST_CHECKPOINT" &
+    python cbr_lightning/train2.py --config "$CONFIG" --resume-comprehensive "$LATEST_CHECKPOINT" &
 else
     echo "Starting fresh training..."
-    python ../cbr_lightning/train2.py --config "$CONFIG" &
+    python cbr_lightning/train2.py --config "$CONFIG" &
 fi
 
 TRAINING_PID=$!
