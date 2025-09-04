@@ -147,9 +147,8 @@ class TemperatureSchedulerCallback(pl.Callback):
                 current_temp = pl_module.temp_scheduler.get_temperature()
                 pl_module.temperature = current_temp
                 
-                # Log temperature
-                if trainer.logger:
-                    trainer.logger.log_metrics({'temperature': current_temp}, step=trainer.global_step)
+                # Log temperature to our simple logger if available
+                print(f"Epoch {trainer.current_epoch}: Temperature = {current_temp:.6f}")
 
 
 class ComprehensiveCheckpointCallback(pl.Callback):
