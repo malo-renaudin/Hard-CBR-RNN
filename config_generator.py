@@ -418,10 +418,10 @@ LATEST_CHECKPOINT=$(find_latest_checkpoint)
 if [[ -n "$LATEST_CHECKPOINT" && -f "$LATEST_CHECKPOINT" ]]; then
     echo "Found existing checkpoint: $LATEST_CHECKPOINT"
     echo "Resuming training from checkpoint..."
-    python cbr_lightning/train2.py --config "$CONFIG" --resume-comprehensive "$LATEST_CHECKPOINT" &
+    python ../cbr_lightning/train2.py --config "$CONFIG" --resume-comprehensive "$LATEST_CHECKPOINT" &
 else
     echo "Starting fresh training..."
-    python cbr_lightning/train2.py --config "$CONFIG" &
+    python ../cbr_lightning/train2.py --config "$CONFIG" &
 fi
 
 TRAINING_PID=$!
