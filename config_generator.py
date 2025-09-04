@@ -354,11 +354,18 @@ def save_configs_and_create_job_script(configs: List[Dict], output_dir: str = "c
     job_script = f"""#!/bin/bash
 #SBATCH --job-name=lm_training
 #SBATCH --array=0-{len(configs)-1}
-#SBATCH --output=logs/job_%A_%a.out
-#SBATCH --error=logs/job_%A_%a.err
-#SBATCH --time=48:00:00
-#SBATCH --mem=32G
+#SBATCH --output=logs/grid_%A_%a.out
+#SBATCH --error=logs/grid_%A_%a.err
+#SBATCH --time=20:00:00
 #SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=24
+#SBATCH --constraint=h100
+#SBATCH --account=ywa@h100
+#SBATCH --hint=nomultithread
+#SBATCH --partition=gpu_p6
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=malorenaudin1@gmail.com
+#SBATCH --qos=qos_gpu_h100-t3
 #SBATCH --signal=SIGUSR1@90
 
 # Timeout handler - save checkpoint before timeout
@@ -390,9 +397,10 @@ STATUS_FILE="status/job_${{SLURM_ARRAY_TASK_ID}}.status"
 echo "Starting job $SLURM_ARRAY_TASK_ID with config: $CONFIG"
 echo "STARTED" > "$STATUS_FILE"
 
-# Activate conda environment
-source ~/.bashrc
-conda activate leaps3
+# Load modules and activate conda environment
+module purge
+module load pytorch-gpu/py3/2.1.1
+source activate leaps3
 
 # Function to find latest comprehensive checkpoint
 find_latest_checkpoint() {{
