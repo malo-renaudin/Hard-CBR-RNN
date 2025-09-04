@@ -543,6 +543,29 @@ def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
     
     logger.log_hyperparams(hyperparams)
     
+    # Log hyperparameters if logger is available
+    if logger is not None:
+        hyperparams = {
+            'model_type': model_type,
+            'total_params': total_params,
+            'vocab_size': data_module.vocab_size,
+            **model_config,
+            **data_config
+        }
+        
+        # Add temperature scheduler params if applicable
+        if hasattr(model, 'temp_scheduler'):
+            hyperparams.update({
+                'temp_initial': model.temp_scheduler.initial_temp,
+                'temp_decay_rate': model.temp_scheduler.decay_rate,
+                'temp_final': model.temp_scheduler.final_temp
+            })
+        
+        try:
+            logger.log_hyperparams(hyperparams)
+        except Exception as e:
+            print(f"Failed to log hyperparameters: {e}")
+    
     # Create callbacks
     callbacks = create_callbacks(config)
     

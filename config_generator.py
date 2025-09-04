@@ -835,7 +835,6 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
     
     return config
 
-
 def main():
     parser = argparse.ArgumentParser(description='Interactive config generator for language model training')
     parser.add_argument('--output-dir', default='configs', help='Output directory for configs')
