@@ -341,7 +341,7 @@ def create_base_config(basic_settings: Dict, model_type: str, model_config: Dict
         'model': {
             'type': model_type,
             'config': {
-                'learning_rate': 1e-3,
+                'learning_rate': 1e-2,
                 'weight_decay': 0.01,
                 **model_config
             }
