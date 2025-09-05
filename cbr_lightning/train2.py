@@ -95,9 +95,9 @@ class UniversalDataModule(pl.LightningDataModule):
         super().__init__()
         self.dataset_path = dataset_path
         self.tokenizer_path = tokenizer_path
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.max_length = max_length
+        self.batch_size = int(batch_size)
+        self.num_workers = int(num_workers)
+        self.max_length = int(max_length)
         
     def setup(self, stage: Optional[str] = None):
         # Load dataset
