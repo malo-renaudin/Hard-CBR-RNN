@@ -10,7 +10,44 @@ import itertools
 from pathlib import Path
 from typing import Dict, Any, List
 import argparse
+import pickle 
 
+def get_vocabulary_size(tokenizer_path: str) -> int:
+    """Automatically detect vocabulary size from tokenizer"""
+    try:
+        tokenizer_path = Path(tokenizer_path)
+        if not tokenizer_path.exists():
+            print(f"Warning: Tokenizer file {tokenizer_path} not found")
+            return 50000
+            
+        print(f"Loading tokenizer from: {tokenizer_path}")
+        
+        # Handle different tokenizer formats
+        if tokenizer_path.suffix == '.pkl':
+            with open(tokenizer_path, 'rb') as f:
+                tokenizer = pickle.load(f)
+        
+        
+        # Try different methods to get vocab size
+        vocab_size = None
+        if hasattr(tokenizer, 'vocab_size'):
+            vocab_size = tokenizer.vocab_size
+        elif hasattr(tokenizer, 'get_vocab'):
+            vocab_size = len(tokenizer.get_vocab())
+        elif hasattr(tokenizer, '__len__'):
+            vocab_size = len(tokenizer)
+            
+        if vocab_size is None:
+            print(f"Warning: Could not determine vocab size from {tokenizer_path}")
+            return 50000
+            
+        print(f"Detected vocabulary size: {vocab_size}")
+        return vocab_size
+            
+    except Exception as e:
+        print(f"Error loading tokenizer from {tokenizer_path}: {e}")
+        print("Using default vocabulary size: 50000")
+        return 50000
 
 def ask_question(question: str, options: List[str] = None, default: str = None, data_type: type = str):
     """Ask a question with optional validation"""
@@ -100,6 +137,32 @@ def configure_basic_settings():
         "Tokenizer path", 
         default="./tokenizer.pkl"
     )
+    
+    print("\n--- Vocabulary Configuration ---")
+    auto_detect = ask_question(
+        "Auto-detect vocabulary size from tokenizer?",
+        options=["yes", "no"],
+        default="1"
+    ) == "yes"
+    
+    if auto_detect:
+        try:
+            vocab_size = get_vocabulary_size(config['tokenizer_path'])
+            print(f"Detected vocabulary size: {vocab_size}")
+            config['vocab_size'] = vocab_size
+        except Exception as e:
+            print(f"Failed to auto-detect vocabulary size: {e}")
+            config['vocab_size'] = ask_question(
+                "Enter vocabulary size manually", 
+                default="50000", 
+                data_type=int
+            )
+    else:
+        config['vocab_size'] = ask_question(
+            "Vocabulary size", 
+            default="50000", 
+            data_type=int
+        )
     
     # Training basics
     print("\n--- Training Configuration ---")
@@ -736,6 +799,8 @@ def generate_cross_model_configs(basic_settings: Dict, grid_params: Dict) -> Lis
     
     # Separate model list from other parameters
     models = grid_params.pop('models')
+    vocab_size = basic_settings.get('vocab_size', 50000)
+
     
     configs = []
     config_id = 0
@@ -771,7 +836,7 @@ def generate_cross_model_configs(basic_settings: Dict, grid_params: Dict) -> Lis
             param_dict = dict(zip(param_names, combo)) if combo else {}
             
             # Create model-specific config
-            model_config = create_model_specific_config(model_type, param_dict)
+            model_config = create_model_specific_config(model_type, param_dict, vocab_size)
             
             # Create base config
             config = create_base_config(basic_settings, model_type, model_config)
@@ -789,12 +854,12 @@ def generate_cross_model_configs(basic_settings: Dict, grid_params: Dict) -> Lis
     return configs
 
 
-def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
+def create_model_specific_config(model_type: str, param_dict: Dict, vocab_size : int) -> Dict:
     """Create model-specific configuration from parameter dictionary"""
     
     if model_type == "CBR_RNN":
         config = {
-            'ntoken': 50000,
+            'ntoken': vocab_size,
             'ninp': param_dict.get('embedding_dim', 256),
             'nhid': param_dict.get('hidden_dim', 512),
             'nheads': 4,
@@ -812,7 +877,7 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
             
     elif model_type == "Transformer":
         config = {
-            'vocab_size':50000,
+            'vocab_size':vocab_size,
             'd_model': param_dict.get('hidden_dim', 384),
             # 'ninp': param_dict.get('embedding_dim', 384),  # For compatibility
             'n_heads': 8,
@@ -826,7 +891,7 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
         
     elif model_type == "LSTM":
         config = {
-            'vocab_size': 50000,
+            'vocab_size': vocab_size,
             'embedding_dim': param_dict.get('embedding_dim', 256),
             'hidden_dim': param_dict.get('hidden_dim', 512),
             'num_layers':2,
