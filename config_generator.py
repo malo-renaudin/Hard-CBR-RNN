@@ -794,7 +794,7 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
     
     if model_type == "CBR_RNN":
         config = {
-            'ntoken': 49999,
+            'ntoken': 50000,
             'ninp': param_dict.get('embedding_dim', 256),
             'nhid': param_dict.get('hidden_dim', 512),
             'nheads': 4,
@@ -812,7 +812,7 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
             
     elif model_type == "Transformer":
         config = {
-            'vocab_size':49999,
+            'vocab_size':50000,
             'd_model': param_dict.get('hidden_dim', 384),
             # 'ninp': param_dict.get('embedding_dim', 384),  # For compatibility
             'n_heads': 8,
@@ -826,7 +826,7 @@ def create_model_specific_config(model_type: str, param_dict: Dict) -> Dict:
         
     elif model_type == "LSTM":
         config = {
-            'vocab_size': 49999,
+            'vocab_size': 50000,
             'embedding_dim': param_dict.get('embedding_dim', 256),
             'hidden_dim': param_dict.get('hidden_dim', 512),
             'num_layers':2,
