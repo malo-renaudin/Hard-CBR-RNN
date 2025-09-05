@@ -252,6 +252,10 @@ class CBR_RNN(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         # Extract data and targets from batch
         data, targets = batch
+        print('data', data.shape)
+        print('targets', targets.shape)
+        data = data.transpose(0,1)
+        targets = targets.transpose(0,1)
         # data = data.transpose(0,1)
         # targets = targets.transpose(0,1)
 
@@ -311,7 +315,8 @@ class CBR_RNN(pl.LightningModule):
         """Validation step for PyTorch Lightning"""
         # Extract data and targets from batch
         data, targets = batch
-        
+        data = data.transpose(0,1)
+        targets = targets.transpose(0,1)
         # Initialize cache for CBR_RNN
         cache = self.init_cache(data)
         
