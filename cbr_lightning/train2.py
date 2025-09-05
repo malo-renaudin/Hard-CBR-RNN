@@ -67,7 +67,7 @@ class SimpleFileLogger:
 
 
 class SimpleMetricsCallback(pl.Callback):
-    """Callback to log metrics to file"""
+    """Callback to log metrics to file, including learning rates"""
     
     def __init__(self, logger: SimpleFileLogger):
         self.logger = logger
@@ -75,16 +75,41 @@ class SimpleMetricsCallback(pl.Callback):
     def on_train_epoch_end(self, trainer, pl_module):
         """Log training metrics at epoch end"""
         metrics = {}
+        
+        # Log standard metrics
         for key, value in trainer.callback_metrics.items():
             if isinstance(value, torch.Tensor):
                 metrics[key] = value.item()
             else:
                 metrics[key] = value
         
+        # Log learning rates from all optimizers
+        if trainer.optimizers:
+            for i, optimizer in enumerate(trainer.optimizers):
+                for j, param_group in enumerate(optimizer.param_groups):
+                    lr_key = f'lr' if len(trainer.optimizers) == 1 and len(optimizer.param_groups) == 1 else f'lr_opt{i}_group{j}'
+                    metrics[lr_key] = param_group['lr']
+        
+        # Log temperature if available
         if hasattr(pl_module, 'temperature'):
             metrics['temperature'] = pl_module.temperature
             
+        # Log current epoch
+        metrics['epoch'] = trainer.current_epoch
+        metrics['global_step'] = trainer.global_step
+            
         self.logger.log_metrics(metrics, trainer.current_epoch)
+        
+        # Also print some key metrics to console for monitoring
+        if 'train_loss' in metrics:
+            print(f"Epoch {trainer.current_epoch}: Train Loss = {metrics['train_loss']:.6f}", end="")
+        if 'val_loss' in metrics:
+            print(f", Val Loss = {metrics['val_loss']:.6f}", end="")
+        if 'lr' in metrics:
+            print(f", LR = {metrics['lr']:.2e}", end="")
+        if 'temperature' in metrics:
+            print(f", Temp = {metrics['temperature']:.6f}", end="")
+        print()  # New line
 
 
 class UniversalDataModule(pl.LightningDataModule):
@@ -319,9 +344,9 @@ def create_callbacks(config: Dict[str, Any]) -> list:
         )
         callbacks.append(early_stop_callback)
     
-    # Learning rate monitor
-    lr_monitor = LearningRateMonitor(logging_interval='epoch')
-    callbacks.append(lr_monitor)
+    # # Learning rate monitor
+    # lr_monitor = LearningRateMonitor(logging_interval='epoch')
+    # callbacks.append(lr_monitor)
     
     return callbacks
 
@@ -461,7 +486,7 @@ def resume_training_from_comprehensive_checkpoint(checkpoint_path: str, config_p
     # Create trainer with no external logging
     trainer = pl.Trainer(
         logger=False,  # Disable built-in logger
-        callbacks=create_callbacks(config),
+        callbacks=create_callbacks(config, use_logger=False),
         **config.get('trainer', {})
     )
     
