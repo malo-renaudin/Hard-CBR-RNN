@@ -216,7 +216,26 @@ class CBR_RNN(pl.LightningModule):
         # nheads = nheads if nheads is not None else self.nheads
         # temperature = temperature if temperature is not None else self.temperature
         # gumbel_softmax = gumbel_softmax if gumbel_softmax is not None else self.gumbel_softmax
-  
+        # Add this debugging code before the encoder call
+        print(f"DEBUG: observation shape: {observation.shape}")
+        print(f"DEBUG: observation dtype: {observation.dtype}")
+        print(f"DEBUG: observation min: {observation.min().item()}")
+        print(f"DEBUG: observation max: {observation.max().item()}")
+        
+        # Check encoder vocab size
+        encoder_vocab_size = self.encoder.num_embeddings
+        print(f"DEBUG: encoder vocab size: {encoder_vocab_size}")
+        
+        # Check for out-of-bounds indices
+        max_token = observation.max().item()
+        if max_token >= encoder_vocab_size:
+            print(f"ERROR: Token {max_token} >= vocab size {encoder_vocab_size}")
+            print(f"Out-of-bounds tokens: {observation[observation >= encoder_vocab_size]}")
+            
+            # TEMPORARY FIX: Clamp to valid range
+            observation = torch.clamp(observation, 0, encoder_vocab_size - 1)
+            print("Applied clamping to fix out-of-bounds tokens")
+            
         seq_len = observation.size(0)
     
         if initial_cache is not None:
