@@ -168,7 +168,7 @@ def configure_basic_settings():
     )
     config['batch_size'] = ask_question(
         "Batch size", 
-        default="32", 
+        default="512", 
         data_type=int
     )
     config['max_length'] = ask_question(
