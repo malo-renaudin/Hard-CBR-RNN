@@ -132,7 +132,7 @@ class UniversalDataModule(pl.LightningDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
-            persistent_workers=True if self.num_workers > 0 else False
+            persistent_workers=True if int(self.num_workers) > 0 else False
         )
     
     def val_dataloader(self):
@@ -142,7 +142,7 @@ class UniversalDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
-            persistent_workers=True if self.num_workers > 0 else False
+            persistent_workers=True if int(self.num_workers) > 0 else False
         )
     
     def test_dataloader(self):
@@ -152,7 +152,7 @@ class UniversalDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
-            persistent_workers=True if self.num_workers > 0 else False
+            persistent_workers=True if int(self.num_workers) > 0 else False
         )
 
 
