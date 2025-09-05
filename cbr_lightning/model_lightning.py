@@ -117,7 +117,7 @@ class CBR_RNN(pl.LightningModule):
     def init_cache(self, observation):
         """Initialize hidden state and attention caches"""
         if len(observation.size()) > 1:
-            bsz = observation.size(0)
+            bsz = observation.size(dim=-1)
         else:
             bsz = 1
 
@@ -360,6 +360,43 @@ class CBR_RNN(pl.LightningModule):
         # Log metrics
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
         self.log('val_ppl', ppl, prog_bar=True, on_step=False, on_epoch=True)
+        
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        """Test step for PyTorch Lightning"""
+        # Extract data and targets from batch
+        data, targets = batch
+        data = data.transpose(0,1)
+        targets = targets.transpose(0,1)
+        # Initialize cache for CBR_RNN
+        cache = self.init_cache(data)
+        
+        # Forward pass
+        output, _ = self.forward(
+            data, 
+            initial_cache=cache, 
+            nheads=self.nheads, 
+            temperature=self.temperature, 
+            gumbel_softmax=self.gumbel_softmax
+        )
+        
+        # Reshape outputs and targets for loss computation
+        output_flat = output.reshape(-1, output.size(-1))
+        targets_flat = targets.reshape(-1)
+        
+        # Calculate loss
+        if self.criterion == 'cross_entropy':
+            loss = F.cross_entropy(output_flat, targets_flat)
+        else:
+            raise ValueError(f"Unsupported criterion: {self.criterion}")
+        
+        # Calculate perplexity for logging
+        ppl = torch.exp(loss)
+        
+        # Log metrics
+        self.log('test_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
+        self.log('test_ppl', ppl, prog_bar=True, on_step=False, on_epoch=True)
         
         return loss
 
