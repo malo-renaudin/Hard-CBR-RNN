@@ -30,7 +30,7 @@ def get_vocabulary_size(tokenizer_path: str) -> int:
         
         # Try different methods to get vocab size
         # vocab_size = None
-        vocab_size = tokenizer['vocab_size']
+        vocab_size = tokenizer['vocab_size']+1
             
         if vocab_size is None:
             print(f"Warning: Could not determine vocab size from {tokenizer_path}")
