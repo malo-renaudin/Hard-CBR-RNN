@@ -584,7 +584,10 @@ def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
     trainer = pl.Trainer(
         logger=False,  # Disable built-in logger
         callbacks=callbacks,
-        **trainer_config
+        gradient_clip_val=1.0,  # Add this line
+        gradient_clip_algorithm="norm"
+        **trainer_config,
+        
     )
     
     print("Starting training...")
