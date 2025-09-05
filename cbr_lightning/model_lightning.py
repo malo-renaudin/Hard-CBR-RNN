@@ -117,7 +117,7 @@ class CBR_RNN(pl.LightningModule):
     def init_cache(self, observation):
         """Initialize hidden state and attention caches"""
         if len(observation.size()) > 1:
-            bsz = observation.size(dim=-1)
+            bsz = observation.size(0)
         else:
             bsz = 1
 
