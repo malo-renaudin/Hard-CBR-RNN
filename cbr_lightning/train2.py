@@ -588,7 +588,6 @@ def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
         callbacks=callbacks,
         **trainer_config,
         log_every_n_steps = 10,
-        gradient_clip_val=1.0,
     )
     
 
