@@ -276,6 +276,13 @@ class CBR_RNN(pl.LightningModule):
 
         decoded = self.decoder(hidden[-self.seq_len:]).transpose(0,1)
         cache = self.compress_cache(hidden, key_cache, value_cache)
+        
+        if self.training:
+            self._last_hidden = hidden
+            self._last_attn_out = attn_out
+            self._last_key_cache = key_cache
+            self._last_value_cache = value_cache
+            
         return decoded, cache
 
     # ----------------------
@@ -345,6 +352,17 @@ class CBR_RNN(pl.LightningModule):
     def training_step(self, batch, batch_idx): return self._shared_step(batch, "train")
     def validation_step(self, batch, batch_idx): return self._shared_step(batch, "val")
     def test_step(self, batch, batch_idx): return self._shared_step(batch, "test")
+    
+    def on_before_optimizer_step(self, optimizer):
+        # Set flag to compute gradients on next training step
+        self._log_gradients = True
+    
+    def on_after_optimizer_step(self, optimizer, optimizer_closure):
+        # Reset flag after optimizer step
+        self._log_gradients = False
+
+    def on_train_epoch_end(self): 
+        self.epoch_cache = None
 
     def on_train_epoch_end(self): self.epoch_cache = None
 
@@ -355,7 +373,7 @@ class CBR_RNN(pl.LightningModule):
         optimizer = torch.optim.AdamW(
             self.parameters(), 
             lr=self.hparams.learning_rate, 
-            weight_decay=self.hparams.weight_decay,
+            weight_decay=0.05,
             betas=(0.9, 0.999)
         )
         
