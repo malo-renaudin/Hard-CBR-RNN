@@ -553,7 +553,7 @@ class Transformer(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         input_ids, targets = batch
-        logits = self(input_ids)
+        logits = self(input_ids, self.temperature, self.gumbel_softmax)
         
         # shift_logits = logits[..., :-1, :].contiguous()
         # shift_targets = targets[..., 1:].contiguous()
