@@ -504,7 +504,8 @@ def resume_training_from_comprehensive_checkpoint(checkpoint_path: str, config_p
     trainer = pl.Trainer(
         logger=False,  # Disable built-in logger
         callbacks=create_callbacks(config, use_logger=False),
-        **config.get('trainer', {})
+        **config.get('trainer', {}),
+        
     )
     
     # Resume training
@@ -586,7 +587,8 @@ def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
         logger=logger,
         callbacks=callbacks,
         **trainer_config,
-        log_every_n_steps = 10
+        log_every_n_steps = 10,
+        gradient_clip_val=1.0,
     )
     
 
