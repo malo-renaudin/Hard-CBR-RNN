@@ -233,7 +233,6 @@ class ModelFactory:
                 'vocab_size': vocab_size,
                 'embedding_dim': model_config.get('ninp', 256),
                 'hidden_dim': model_config.get('nhid', 512),
-                'learning_rate': model_config.get('learning_rate', 1e-3)
             }
             return LSTM(**lstm_config)
             
