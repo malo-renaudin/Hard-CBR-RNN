@@ -423,7 +423,7 @@ def save_configs_and_create_job_script(configs: List[Dict], output_dir: str = "c
 #SBATCH --partition=gpu_p6
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=malorenaudin1@gmail.com
-#SBATCH --qos=qos_gpu-dev
+#SBATCH --qos=qos_gpu_h100-dev
 #SBATCH --signal=SIGUSR1@90
 
 # Timeout handler - save checkpoint before timeout
