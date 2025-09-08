@@ -6,6 +6,9 @@ import torch.nn.functional as F
 import math
 import logging
 from attention import MultiheadAttention
+from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
+from torchmetrics import MeanMetric
 
 class TemperatureScheduler:
     """Simple exponential decay temperature scheduler"""
@@ -322,6 +325,24 @@ class CBR_RNN(pl.LightningModule):
         self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True)
         self.log('train_ppl', ppl, prog_bar=True, on_step=True, on_epoch=True)
         self.log('temperature', self.temperature, on_step=True)
+        
+        # --- Gradient norm (whole model) ---
+        if self.global_step > 0:  # skip first step before backward
+            total_grad_norm = torch.norm(
+                torch.stack([p.grad.detach().data.norm(2)
+                             for p in self.model.parameters() if p.grad is not None]), 2
+            ) if any(p.grad is not None for p in self.model.parameters()) else torch.tensor(0.0)
+            self.log("grad_norm_total", total_grad_norm, on_step=True)
+
+        # --- Weight & grad norms per parameter ---
+        for name, p in self.named_parameters():
+            if p.requires_grad:
+                w_norm = p.data.norm(2)
+                self.log(f"weight_norm/{name}", w_norm, on_step=True)
+
+                if p.grad is not None:
+                    g_norm = p.grad.data.norm(2)
+                    self.log(f"grad_norm/{name}", g_norm, on_step=True)
         
         return loss
     
