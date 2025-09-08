@@ -250,8 +250,8 @@ if __name__ == "__main__":
     tokenizer_path = "./tokenizer.pkl"
     
     # Configuration
-    sequence_length = 64
-    stride = 1
+    sequence_length = 128
+    stride = 128
     text_chunk_size = 1000  # Reduce if memory issues
     batch_size = 10000      # Reduce if memory issues
     
