@@ -360,7 +360,7 @@ def create_base_config(basic_settings: Dict, model_type: str, model_config: Dict
             'precision': basic_settings['precision'],
             'gradient_clip_val': 1,
             'gradient_clip_algorithm' : "norm",
-            'accumulate_grad_batches': 1,
+            'accumulate_grad_batches': 2,
             'val_check_interval': 0.5
         },
         'logging': {
