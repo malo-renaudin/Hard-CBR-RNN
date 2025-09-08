@@ -142,6 +142,110 @@ class CBR_RNN(pl.LightningModule):
         
         return hidden_compressed, key_compressed, value_compressed
 
+     # ----------------------
+    # Training metrics computation
+    # ----------------------
+    def compute_gradient_metrics(self):
+        """Compute gradient-related metrics"""
+        total_norm = 0.0
+        param_count = 0
+        grad_count = 0
+        layer_grad_norms = {}
+        
+        for name, param in self.named_parameters():
+            if param.grad is not None:
+                param_norm = param.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+                grad_count += param.numel()
+                
+                # Layer-wise gradient norms
+                layer_name = name.split('.')[0]
+                if layer_name not in layer_grad_norms:
+                    layer_grad_norms[layer_name] = 0.0
+                layer_grad_norms[layer_name] += param_norm.item() ** 2
+                
+            param_count += param.numel()
+        
+        total_grad_norm = total_norm ** 0.5
+        
+        # Compute layer-wise norms
+        for layer_name in layer_grad_norms:
+            layer_grad_norms[layer_name] = layer_grad_norms[layer_name] ** 0.5
+            
+        return {
+            'grad_norm': total_grad_norm,
+            'grad_count': grad_count,
+            'param_count': param_count,
+            'layer_grad_norms': layer_grad_norms
+        }
+    
+    def compute_weight_metrics(self):
+        """Compute weight-related metrics"""
+        total_weight_norm = 0.0
+        layer_weight_norms = {}
+        
+        for name, param in self.named_parameters():
+            param_norm = param.data.norm(2)
+            total_weight_norm += param_norm.item() ** 2
+            
+            # Layer-wise weight norms
+            layer_name = name.split('.')[0]
+            if layer_name not in layer_weight_norms:
+                layer_weight_norms[layer_name] = 0.0
+            layer_weight_norms[layer_name] += param_norm.item() ** 2
+        
+        total_weight_norm = total_weight_norm ** 0.5
+        
+        # Compute layer-wise norms
+        for layer_name in layer_weight_norms:
+            layer_weight_norms[layer_name] = layer_weight_norms[layer_name] ** 0.5
+            
+        return {
+            'weight_norm': total_weight_norm,
+            'layer_weight_norms': layer_weight_norms
+        }
+    
+    def compute_activation_metrics(self, hidden, key_cache, value_cache, attn_out):
+        """Compute activation statistics"""
+        metrics = {}
+        
+        # Hidden state statistics
+        if hidden is not None:
+            metrics['hidden_mean'] = hidden.mean().item()
+            metrics['hidden_std'] = hidden.std().item()
+            metrics['hidden_sparsity'] = (hidden.abs() < 1e-6).float().mean().item()
+        
+        # Attention output statistics
+        if attn_out is not None:
+            metrics['attn_mean'] = attn_out.mean().item()
+            metrics['attn_std'] = attn_out.std().item()
+            metrics['attn_sparsity'] = (attn_out.abs() < 1e-6).float().mean().item()
+            
+        return metrics
+
+    def compute_learning_dynamics(self, loss):
+        """Compute learning rate and update ratios"""
+        current_lr = self.trainer.optimizers[0].param_groups[0]['lr']
+        
+        # Compute parameter update magnitudes vs parameter magnitudes
+        update_ratios = {}
+        if hasattr(self, '_prev_params'):
+            for name, param in self.named_parameters():
+                if name in self._prev_params:
+                    update = param.data - self._prev_params[name]
+                    update_norm = update.norm(2)
+                    param_norm = param.data.norm(2)
+                    if param_norm > 1e-8:
+                        update_ratios[name] = (update_norm / param_norm).item()
+        
+        # Store current params for next iteration
+        self._prev_params = {name: param.data.clone() for name, param in self.named_parameters()}
+        
+        return {
+            'learning_rate': current_lr,
+            'update_ratios': update_ratios
+        }
+
     # ----------------------
     # Forward
     # ----------------------
@@ -194,6 +298,48 @@ class CBR_RNN(pl.LightningModule):
 
         self.log(f"{stage}_loss", loss, prog_bar=(stage=="train"), on_step=(stage=="train"), on_epoch=True)
         self.log(f"{stage}_ppl", ppl, prog_bar=True, on_step=(stage=="train"), on_epoch=True)
+        
+        # Log detailed training metrics (only during training steps)
+        if stage == "train" and self.training:
+            # Gradient metrics (computed after backward pass)
+            if hasattr(self, '_log_gradients') and self._log_gradients:
+                grad_metrics = self.compute_gradient_metrics()
+                self.log("train_grad_norm", grad_metrics['grad_norm'], on_step=True, on_epoch=False)
+                
+                # Log some key layer gradient norms
+                for layer_name, grad_norm in grad_metrics['layer_grad_norms'].items():
+                    if layer_name in ['encoder', 'decoder', 'multihead_attn']:
+                        self.log(f"train_grad_norm_{layer_name}", grad_norm, on_step=True, on_epoch=False)
+            
+            # Weight metrics
+            weight_metrics = self.compute_weight_metrics()
+            self.log("train_weight_norm", weight_metrics['weight_norm'], on_step=True, on_epoch=False)
+            
+            # Activation metrics
+            if hasattr(self, '_last_hidden'):
+                activation_metrics = self.compute_activation_metrics(
+                    self._last_hidden, self._last_key_cache, self._last_value_cache, self._last_attn_out
+                )
+                for metric_name, value in activation_metrics.items():
+                    self.log(f"train_{metric_name}", value, on_step=True, on_epoch=False)
+            
+            # Learning dynamics
+            learning_metrics = self.compute_learning_dynamics(loss)
+            self.log("train_learning_rate", learning_metrics['learning_rate'], on_step=True, on_epoch=False)
+            self.log("train_temperature", self.temperature, on_step=True, on_epoch=False)
+            
+            # Memory usage (if you want to track it)
+            if torch.cuda.is_available():
+                memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+                memory_reserved = torch.cuda.memory_reserved() / 1024**3    # GB
+                self.log("train_gpu_memory_allocated", memory_allocated, on_step=True, on_epoch=False)
+                self.log("train_gpu_memory_reserved", memory_reserved, on_step=True, on_epoch=False)
+            
+            # Cache compression ratio
+            if hasattr(self, '_last_hidden'):
+                compression_ratio = self.compressed_dim / self._last_hidden.size(0) if self._last_hidden.size(0) > 0 else 1.0
+                self.log("train_cache_compression_ratio", compression_ratio, on_step=True, on_epoch=False)
+                
         return loss
 
     def training_step(self, batch, batch_idx): return self._shared_step(batch, "train")
@@ -206,9 +352,27 @@ class CBR_RNN(pl.LightningModule):
     # Optimizers & schedulers
     # ----------------------
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.hparams.learning_rate, weight_decay=0.1)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000)
-        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "monitor": "val_loss"}}
+        optimizer = torch.optim.AdamW(
+            self.parameters(), 
+            lr=self.hparams.learning_rate, 
+            weight_decay=self.hparams.weight_decay,
+            betas=(0.9, 0.999)
+        )
+        
+        # Classic exponential decay - works well for both RNNs and Transformers
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            optimizer, 
+            gamma=0.99  # Multiply LR by 0.99 each step
+        )
+        
+        return {
+            "optimizer": optimizer, 
+            "lr_scheduler": {
+                "scheduler": scheduler, 
+                "interval": "step",
+                "frequency": 100  # Apply decay every 100 steps
+            }
+        }
 
 ##########################################################################################################################
 #TRANSFORMER
