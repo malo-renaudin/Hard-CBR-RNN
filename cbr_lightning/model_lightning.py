@@ -458,7 +458,7 @@ class TransformerBlock(nn.Module):
 
 class Transformer(pl.LightningModule):
     def __init__(self, vocab_size, d_model, n_heads, n_layers, 
-                 d_ff, max_seq_len, dropout, temperature, gumbel_softmax):
+                 d_ff, max_seq_len, dropout, temperature, gumbel_softmax, learning_rate):
         super().__init__()
         self.save_hyperparameters()
         
@@ -568,7 +568,7 @@ class Transformer(pl.LightningModule):
         return loss
     
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=0.01)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.hparams.learning_rate, weight_decay=0.01)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000)
         return {
             "optimizer": optimizer,
