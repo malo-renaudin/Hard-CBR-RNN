@@ -373,14 +373,14 @@ class CBR_RNN(pl.LightningModule):
         optimizer = torch.optim.AdamW(
             self.parameters(), 
             lr=self.hparams.learning_rate, 
-            weight_decay=0.05,
+            weight_decay=self.hparams.weight_decay,
             betas=(0.9, 0.999)
         )
         
-        # Classic exponential decay - works well for both RNNs and Transformers
+        # Much more conservative decay for plateau recovery
         scheduler = torch.optim.lr_scheduler.ExponentialLR(
             optimizer, 
-            gamma=0.99  # Multiply LR by 0.99 each step
+            gamma=0.999  # Very slow decay: 0.999 instead of 0.995
         )
         
         return {
@@ -388,7 +388,7 @@ class CBR_RNN(pl.LightningModule):
             "lr_scheduler": {
                 "scheduler": scheduler, 
                 "interval": "step",
-                "frequency": 100  # Apply decay every 100 steps
+                "frequency": 500  # Apply decay much less frequently
             }
         }
 
