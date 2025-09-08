@@ -199,7 +199,7 @@ class ModelFactory:
                 'ntoken' : vocab_size, 
                 'ninp' : model_config.get('ninp', 256),
                 'nhid' : model_config.get('nhid', 512),
-                'n_heads': model_config.get('nheads', 1),
+                'nheads': model_config.get('nheads', 1),
                 'seq_len' : model_config.get('seqlen', 128),
                 'compressed_dim' : model_config.get('compressed_dim', 1),
                 'dropout': model_config.get('dropout', 0.1),
