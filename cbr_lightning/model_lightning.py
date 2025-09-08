@@ -64,14 +64,15 @@ class CBR_RNN(pl.LightningModule):
 
         self.decoder = nn.Linear(nhid, ntoken+1)
         self.multihead_attn = MultiheadAttention(embed_dim=nhid, num_heads=nheads, batch_first=True)
-
+        #Tying weights
+        self.decoder.weight = self.encoder.weight
         # Adaptive pooling for cache compression
-        self.hidden_pool = nn.AdaptiveAvgPool1d(compressed_dim)
-        self.key_pool = nn.AdaptiveAvgPool1d(compressed_dim)
-        self.value_pool = nn.AdaptiveAvgPool1d(compressed_dim)
-        self.hidden_compress_norm = nn.LayerNorm(nhid)
-        self.key_compress_norm = nn.LayerNorm(nhid)
-        self.value_compress_norm = nn.LayerNorm(nhid)
+        # self.hidden_pool = nn.AdaptiveAvgPool1d(compressed_dim)
+        # self.key_pool = nn.AdaptiveAvgPool1d(compressed_dim)
+        # self.value_pool = nn.AdaptiveAvgPool1d(compressed_dim)
+        # self.hidden_compress_norm = nn.LayerNorm(nhid)
+        # self.key_compress_norm = nn.LayerNorm(nhid)
+        # self.value_compress_norm = nn.LayerNorm(nhid)
 
         # Training hyperparameters
         self.learning_rate = learning_rate
