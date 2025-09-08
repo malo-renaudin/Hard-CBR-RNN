@@ -585,7 +585,8 @@ def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
     trainer = pl.Trainer(
         logger=logger,
         callbacks=callbacks,
-        **trainer_config
+        **trainer_config,
+        log_every_n_steps = 10
     )
 
     print("Starting training...")
