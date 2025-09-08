@@ -103,9 +103,15 @@ class CBR_RNN(pl.LightningModule):
         return hidden, key_cache, value_cache
 
     def update_cache(self, key_cache, value_cache, hidden, key_i, value_i, hidden_i):
-        hidden = torch.cat((hidden, hidden_i.unsqueeze(0)), dim=0)
-        key_cache = torch.cat((key_cache, key_i.unsqueeze(1)), dim=1)
-        value_cache = torch.cat((value_cache, value_i.unsqueeze(1)), dim=1)
+        # Ensure old cache has NO graph connections
+        hidden_detached = hidden.detach() if hidden.requires_grad else hidden
+        key_detached = key_cache.detach() if key_cache.requires_grad else key_cache
+        value_detached = value_cache.detach() if value_cache.requires_grad else value_cache
+        
+        # Now safe to concatenate
+        hidden = torch.cat((hidden_detached, hidden_i.unsqueeze(0)), dim=0)
+        key_cache = torch.cat((key_detached, key_i.unsqueeze(1)), dim=1)
+        value_cache = torch.cat((value_detached, value_i.unsqueeze(1)), dim=1)
         return key_cache, value_cache, hidden
 
     def compress_cache(self, hidden, key_cache, value_cache):
