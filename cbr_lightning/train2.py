@@ -215,15 +215,15 @@ class ModelFactory:
             # Map config keys for Transformer
             transformer_config = {
                 'vocab_size': vocab_size,
-                'd_model': model_config.get('ninp', 256),
-                'n_heads': model_config.get('nheads', 8),
-                'n_layers': model_config.get('n_layers', 6),
-                'd_ff': model_config.get('d_ff', 1024),
-                'max_seq_len': model_config.get('seq_len', 128),
-                'dropout': model_config.get('dropout', 0.1),
-                'learning_rate': model_config.get('learning_rate', 1e-3),
-                'temperature': model_config.get('temperature', 1.0),
-                'gumbel_softmax': model_config.get('gumbel_softmax', False)
+                'd_model': int(model_config.get('ninp', 256)),
+                'n_heads': int(model_config.get('nheads', 8)),
+                'n_layers':int(model_config.get('n_layers', 6)),
+                'd_ff': int(model_config.get('d_ff', 1024)),
+                'max_seq_len': int(model_config.get('seq_len', 128)),
+                'dropout': float(model_config.get('dropout', 0.1)),
+                'learning_rate': float(model_config.get('learning_rate', 1e-3)),
+                'temperature': float(model_config.get('temperature', 1.0)),
+                'gumbel_softmax': bool(model_config.get('gumbel_softmax', False))
             }
             return Transformer(**transformer_config)
             
@@ -231,8 +231,8 @@ class ModelFactory:
             # Map config keys for LSTM
             lstm_config = {
                 'vocab_size': vocab_size,
-                'embedding_dim': model_config.get('ninp', 256),
-                'hidden_dim': model_config.get('nhid', 512),
+                'embedding_dim': int(model_config.get('ninp', 256)),
+                'hidden_dim': int(model_config.get('nhid', 512)),
             }
             return LSTM(**lstm_config)
             
