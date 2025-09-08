@@ -196,18 +196,17 @@ class ModelFactory:
         
         if model_type.upper() == 'CBR_RNN':
             cbr_config = {
-                'ntoken' : vocab_size, 
-                'ninp' : model_config.get('ninp', 256),
-                'nhid' : model_config.get('nhid', 512),
-                'nheads': model_config.get('nheads', 1),
-                'seq_len' : model_config.get('seqlen', 128),
-                'compressed_dim' : model_config.get('compressed_dim', 1),
-                'dropout': model_config.get('dropout', 0.1),
-                'learning_rate': model_config.get('learning_rate', 1e-3),
-                'temperature': model_config.get('temperature', 1.0),
-                'gumbel_softmax': model_config.get('gumbel_softmax', False),
-                'weight_decay' : model_config.get('weight_decay', 0.01)
-                
+                'ntoken' : vocab_size,
+                'ninp' : int(model_config.get('ninp', 256)),
+                'nhid' : int(model_config.get('nhid', 512)),
+                'nheads': int(model_config.get('nheads', 1)),
+                'seq_len' : int(model_config.get('seqlen', 128)),
+                'compressed_dim' : int(model_config.get('compressed_dim', 1)),
+                'dropout': float(model_config.get('dropout', 0.1)),
+                'learning_rate': float(model_config.get('learning_rate', 1e-3)),
+                'temperature': float(model_config.get('temperature', 1.0)),
+                'gumbel_softmax': bool(model_config.get('gumbel_softmax', False)),
+                'weight_decay' : float(model_config.get('weight_decay', 0.01)),
             }
             return CBR_RNN(**cbr_config)
             
