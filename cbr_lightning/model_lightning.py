@@ -114,19 +114,32 @@ class CBR_RNN(pl.LightningModule):
         value_cache = torch.cat((value_detached, value_i.unsqueeze(1)), dim=1)
         return key_cache, value_cache, hidden
 
+    # def compress_cache(self, hidden, key_cache, value_cache):
+    #     # hidden: [seq_len, batch, nhid] -> [compressed_dim, batch, nhid]
+    #     h = self.hidden_pool(hidden.transpose(0,1).transpose(1,2)).transpose(1,2)
+    #     hidden_compressed = self.drop(self.tanh(self.hidden_compress_norm(h))).transpose(0,1)
+
+    #     # key_cache: [batch, seq_len, nhid] -> [batch, compressed_dim, nhid]
+    #     k = self.key_pool(key_cache.transpose(1,2)).transpose(1,2)
+    #     key_compressed = self.drop(self.tanh(self.key_compress_norm(k)))
+
+    #     # value_cache: [batch, seq_len, nhid] -> [batch, compressed_dim, nhid]
+    #     v = self.value_pool(value_cache.transpose(1,2)).transpose(1,2)
+    #     value_compressed = self.drop(self.tanh(self.value_compress_norm(v)))
+
+    #     return hidden_compressed, key_compressed, value_compressed
+    
     def compress_cache(self, hidden, key_cache, value_cache):
-        # hidden: [seq_len, batch, nhid] -> [compressed_dim, batch, nhid]
-        h = self.hidden_pool(hidden.transpose(0,1).transpose(1,2)).transpose(1,2)
-        hidden_compressed = self.drop(self.tanh(self.hidden_compress_norm(h))).transpose(0,1)
-
-        # key_cache: [batch, seq_len, nhid] -> [batch, compressed_dim, nhid]
-        k = self.key_pool(key_cache.transpose(1,2)).transpose(1,2)
-        key_compressed = self.drop(self.tanh(self.key_compress_norm(k)))
-
-        # value_cache: [batch, seq_len, nhid] -> [batch, compressed_dim, nhid]
-        v = self.value_pool(value_cache.transpose(1,2)).transpose(1,2)
-        value_compressed = self.drop(self.tanh(self.value_compress_norm(v)))
-
+        # Keep only the last N tokens (most recent)
+        if hidden.size(0) > self.compressed_dim:
+            hidden_compressed = hidden[-self.compressed_dim:]
+            key_compressed = key_cache[:, -self.compressed_dim:]
+            value_compressed = value_cache[:, -self.compressed_dim:]
+        else:
+            hidden_compressed = hidden
+            key_compressed = key_cache  
+            value_compressed = value_cache
+        
         return hidden_compressed, key_compressed, value_compressed
 
     # ----------------------
