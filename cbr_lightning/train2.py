@@ -20,96 +20,97 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 import datasets
 import pickle
+from pytorch_lightning.loggers import CSVLogger
 
 # Import your models
 from model_lightning import CBR_RNN, Transformer, LSTM
 
 
-class SimpleFileLogger:
-    """Simple file-based logger to replace MLflow/TensorBoard"""
+# class SimpleFileLogger:
+#     """Simple file-based logger to replace MLflow/TensorBoard"""
     
-    def __init__(self, experiment_name: str, log_dir: str = "./training_logs"):
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(exist_ok=True, parents=True)
+#     def __init__(self, experiment_name: str, log_dir: str = "./training_logs"):
+#         self.log_dir = Path(log_dir)
+#         self.log_dir.mkdir(exist_ok=True, parents=True)
         
-        # Create experiment directory with timestamp
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.experiment_dir = self.log_dir / f"{experiment_name}_{timestamp}"
-        self.experiment_dir.mkdir(exist_ok=True)
+#         # Create experiment directory with timestamp
+#         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+#         self.experiment_dir = self.log_dir / f"{experiment_name}_{timestamp}"
+#         self.experiment_dir.mkdir(exist_ok=True)
         
-        # Create log files
-        self.hyperparams_file = self.experiment_dir / "hyperparameters.json"
-        self.metrics_file = self.experiment_dir / "metrics.jsonl"
-        self.experiment_info_file = self.experiment_dir / "experiment_info.txt"
+#         # Create log files
+#         self.hyperparams_file = self.experiment_dir / "hyperparameters.json"
+#         self.metrics_file = self.experiment_dir / "metrics.jsonl"
+#         self.experiment_info_file = self.experiment_dir / "experiment_info.txt"
         
-        print(f"Logging to: {self.experiment_dir}")
+#         print(f"Logging to: {self.experiment_dir}")
     
-    def log_hyperparams(self, params: Dict[str, Any]):
-        """Log hyperparameters to JSON file"""
-        with open(self.hyperparams_file, 'w') as f:
-            json.dump(params, f, indent=2, default=str)
-        print(f"Hyperparameters logged to: {self.hyperparams_file}")
+#     def log_hyperparams(self, params: Dict[str, Any]):
+#         """Log hyperparameters to JSON file"""
+#         with open(self.hyperparams_file, 'w') as f:
+#             json.dump(params, f, indent=2, default=str)
+#         print(f"Hyperparameters logged to: {self.hyperparams_file}")
     
-    def log_metrics(self, metrics: Dict[str, Any], step: int):
-        """Log metrics to JSONL file"""
-        log_entry = {
-            'step': step,
-            'timestamp': datetime.datetime.now().isoformat(),
-            **metrics
-        }
-        with open(self.metrics_file, 'a') as f:
-            f.write(json.dumps(log_entry, default=str) + '\n')
+#     def log_metrics(self, metrics: Dict[str, Any], step: int):
+#         """Log metrics to JSONL file"""
+#         log_entry = {
+#             'step': step,
+#             'timestamp': datetime.datetime.now().isoformat(),
+#             **metrics
+#         }
+#         with open(self.metrics_file, 'a') as f:
+#             f.write(json.dumps(log_entry, default=str) + '\n')
     
-    def log_experiment_info(self, info: str):
-        """Log general experiment information"""
-        with open(self.experiment_info_file, 'a') as f:
-            f.write(f"[{datetime.datetime.now().isoformat()}] {info}\n")
+#     def log_experiment_info(self, info: str):
+#         """Log general experiment information"""
+#         with open(self.experiment_info_file, 'a') as f:
+#             f.write(f"[{datetime.datetime.now().isoformat()}] {info}\n")
 
 
-class SimpleMetricsCallback(pl.Callback):
-    """Callback to log metrics to file, including learning rates"""
+# class SimpleMetricsCallback(pl.Callback):
+#     """Callback to log metrics to file, including learning rates"""
     
-    def __init__(self, logger: SimpleFileLogger):
-        self.logger = logger
+#     def __init__(self, logger: SimpleFileLogger):
+#         self.logger = logger
     
-    def on_train_epoch_end(self, trainer, pl_module):
-        """Log training metrics at epoch end"""
-        metrics = {}
+#     def on_train_epoch_end(self, trainer, pl_module):
+#         """Log training metrics at epoch end"""
+#         metrics = {}
         
-        # Log standard metrics
-        for key, value in trainer.callback_metrics.items():
-            if isinstance(value, torch.Tensor):
-                metrics[key] = value.item()
-            else:
-                metrics[key] = value
+#         # Log standard metrics
+#         for key, value in trainer.callback_metrics.items():
+#             if isinstance(value, torch.Tensor):
+#                 metrics[key] = value.item()
+#             else:
+#                 metrics[key] = value
         
-        # Log learning rates from all optimizers
-        if trainer.optimizers:
-            for i, optimizer in enumerate(trainer.optimizers):
-                for j, param_group in enumerate(optimizer.param_groups):
-                    lr_key = f'lr' if len(trainer.optimizers) == 1 and len(optimizer.param_groups) == 1 else f'lr_opt{i}_group{j}'
-                    metrics[lr_key] = param_group['lr']
+#         # Log learning rates from all optimizers
+#         if trainer.optimizers:
+#             for i, optimizer in enumerate(trainer.optimizers):
+#                 for j, param_group in enumerate(optimizer.param_groups):
+#                     lr_key = f'lr' if len(trainer.optimizers) == 1 and len(optimizer.param_groups) == 1 else f'lr_opt{i}_group{j}'
+#                     metrics[lr_key] = param_group['lr']
         
-        # Log temperature if available
-        if hasattr(pl_module, 'temperature'):
-            metrics['temperature'] = pl_module.temperature
+#         # Log temperature if available
+#         if hasattr(pl_module, 'temperature'):
+#             metrics['temperature'] = pl_module.temperature
             
-        # Log current epoch
-        metrics['epoch'] = trainer.current_epoch
-        metrics['global_step'] = trainer.global_step
+#         # Log current epoch
+#         metrics['epoch'] = trainer.current_epoch
+#         metrics['global_step'] = trainer.global_step
             
-        self.logger.log_metrics(metrics, trainer.current_epoch)
+#         self.logger.log_metrics(metrics, trainer.current_epoch)
         
-        # Also print some key metrics to console for monitoring
-        if 'train_loss' in metrics:
-            print(f"Epoch {trainer.current_epoch}: Train Loss = {metrics['train_loss']:.6f}", end="")
-        if 'val_loss' in metrics:
-            print(f", Val Loss = {metrics['val_loss']:.6f}", end="")
-        if 'lr' in metrics:
-            print(f", LR = {metrics['lr']:.2e}", end="")
-        if 'temperature' in metrics:
-            print(f", Temp = {metrics['temperature']:.6f}", end="")
-        print()  # New line
+#         # Also print some key metrics to console for monitoring
+#         if 'train_loss' in metrics:
+#             print(f"Epoch {trainer.current_epoch}: Train Loss = {metrics['train_loss']:.6f}", end="")
+#         if 'val_loss' in metrics:
+#             print(f", Val Loss = {metrics['val_loss']:.6f}", end="")
+#         if 'lr' in metrics:
+#             print(f", LR = {metrics['lr']:.2e}", end="")
+#         if 'temperature' in metrics:
+#             print(f", Temp = {metrics['temperature']:.6f}", end="")
+#         print()  # New line
 
 
 class UniversalDataModule(pl.LightningDataModule):
@@ -514,117 +515,98 @@ def resume_training_from_comprehensive_checkpoint(checkpoint_path: str, config_p
 
 
 def train_model(config_path: str, resume_from_checkpoint: Optional[str] = None):
-    """Main training function"""
-    
+    """Main training function using CSVLogger"""
+
     # Load configuration
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-    
     print(f"Configuration loaded from: {config_path}")
-    
+
     # Set random seed
     if 'seed' in config:
         pl.seed_everything(config['seed'])
-    
+
     # Create data module
     data_config = config['data']
     data_module = UniversalDataModule(**data_config)
     data_module.setup()
-    
     print(f"Dataset loaded. Vocab size: {data_module.vocab_size}")
-    
+
     # Create model
     model_type = config['model']['type']
     model_config = config['model']['config']
     model = ModelFactory.create_model(model_type, model_config, data_module.vocab_size)
-    
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Model created: {model_type}")
-    print(f"Total parameters: {total_params:,}")
-    
-    # Print temperature scheduler info if using Gumbel softmax
+    print(f"Model created: {model_type}, total parameters: {total_params:,}")
+
+    # Temperature scheduler info
     if hasattr(model, 'gumbel_softmax') and model.gumbel_softmax:
         if hasattr(model, 'temp_scheduler'):
-            print(f"Using temperature scheduler:")
-            print(f"  Initial temperature: {model.temp_scheduler.initial_temp}")
-            print(f"  Decay rate: {model.temp_scheduler.decay_rate}")
-            print(f"  Final temperature: {model.temp_scheduler.final_temp}")
+            print(f"Using temperature scheduler: {model.temp_scheduler.initial_temp} -> {model.temp_scheduler.final_temp}")
         else:
             print("Warning: Gumbel softmax enabled but no temperature scheduler found!")
-    
-    # Create simple file logger
-    logger_config = config.get('logging', {})
-    experiment_name = logger_config.get('experiment_name', f'language_modeling_{model_type.lower()}')
-    logger = SimpleFileLogger(experiment_name)
-    
-    # Log experiment info
-    logger.log_experiment_info(f"Starting training for {model_type}")
-    logger.log_experiment_info(f"Total parameters: {total_params:,}")
-    logger.log_experiment_info(f"Vocab size: {data_module.vocab_size}")
-    
+
+    # CSV Logger setup
+    experiment_name = config.get('logging', {}).get(
+        'experiment_name', f'language_modeling_{model_type.lower()}'
+    )
+    logger = CSVLogger(
+        save_dir="./training_logs",
+        name=experiment_name,
+        version=datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    )
+
     # Log hyperparameters
-    hyperparams = {
+    hparams = {
         'model_type': model_type,
         'total_params': total_params,
         'vocab_size': data_module.vocab_size,
         **model_config,
         **data_config
     }
-    
-    # Add temperature scheduler params if applicable
     if hasattr(model, 'temp_scheduler'):
-        hyperparams.update({
+        hparams.update({
             'temp_initial': model.temp_scheduler.initial_temp,
             'temp_decay_rate': model.temp_scheduler.decay_rate,
             'temp_final': model.temp_scheduler.final_temp
         })
-        logger.log_experiment_info(f"Using temperature scheduler: {model.temp_scheduler.initial_temp} -> {model.temp_scheduler.final_temp}")
-    
-    logger.log_hyperparams(hyperparams)
-    
-    # Create callbacks
+    logger.log_hyperparams(hparams)
+
+    # Callbacks
     callbacks = create_callbacks(config)
-    
-    # Add temperature scheduler callback if needed
     if hasattr(model, 'temp_scheduler'):
         callbacks.append(TemperatureSchedulerCallback())
-    
-    # Add simple metrics callback
-    callbacks.append(SimpleMetricsCallback(logger))
-    
-    # Create trainer (no external logger)
-    trainer_config = config.get('trainer', {})
+
+    # Trainer
     trainer_config = config.get('trainer', {})
     trainer_config['gradient_clip_val'] = 1.0
     trainer_config['gradient_clip_algorithm'] = "norm"
-    
+
     trainer = pl.Trainer(
-        logger=False,  # Disable built-in logger
+        logger=logger,
         callbacks=callbacks,
-        **trainer_config,
-        
+        **trainer_config
     )
-    
+
     print("Starting training...")
-    
-    # Train model
     trainer.fit(
-        model, 
+        model,
         datamodule=data_module,
         ckpt_path=resume_from_checkpoint
     )
-    
+
     # Test model
     if config.get('run_test', True):
         print("Running test...")
         trainer.test(model, datamodule=data_module)
-    
+
     print("Training completed!")
-    
+
     # Save final model
     save_path = Path(config.get('save_path', './final_model.ckpt'))
     trainer.save_checkpoint(save_path)
     print(f"Final model saved to: {save_path}")
+
 
 
 def test_model_creation(config_path: str):

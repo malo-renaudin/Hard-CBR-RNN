@@ -34,404 +34,159 @@ class CBR_RNN(pl.LightningModule):
                  temperature=1.0, gumbel_softmax=False, criterion='cross_entropy',
                  optimizer_type='adam', weight_decay=0.0, scheduler_type=None, temp_decay_rate=0.95, temp_final=0.1):
         super().__init__()
-        
-        # Save hyperparameters for logging and checkpointing
         self.save_hyperparameters()
-        
+
+        # Temperature scheduler
         self.temp_scheduler = TemperatureScheduler(
             initial_temp=temperature,
             decay_rate=temp_decay_rate,
             final_temp=temp_final
         )
-        
-        # Store initial temperature
-        self.initial_temperature = temperature
-        self.epoch_cache = None
+        self.temperature = temperature
+        self.gumbel_softmax = gumbel_softmax
+
+        # Model components
+        self.encoder = nn.Embedding(ntoken+1, ninp)
+        self.nhid = nhid
         self.seq_len = seq_len
         self.compressed_dim = compressed_dim
         self.nheads = nheads
-        self.tanh = nn.Tanh()
         self.drop = nn.Dropout(dropout)
-        self.score_attn = nn.Softmax(dim=-1)
-        self.encoder = nn.Embedding(ntoken+1, ninp)
-        self.q = nn.Linear(ninp + nhid, nhid)
-        self.intermediate_h = nn.Linear(nhid * 3 + ninp, nhid * 4)
-        self.decoder = nn.Linear(nhid, ntoken+1)
-        self.q_norm = torch.nn.LayerNorm(nhid)
-        self.int_norm = torch.nn.LayerNorm(nhid * 4)
-        self.f_norm = torch.nn.LayerNorm(nhid * 3)
-        self.nhid = nhid
-        self.final_h = nn.Linear(nhid * 4, nhid * 3)
-        self.multihead_attn = MultiheadAttention(
-            embed_dim=nhid, num_heads=nheads, batch_first=True
-        )
-        # self.hidden_compress = nn.Linear(nhid*(seq_len+compressed_dim), nhid*compressed_dim)
-        # self.key_compress = nn.Linear(nhid*(seq_len+compressed_dim), nhid*compressed_dim) 
-        # self.value_compress = nn.Linear(nhid*(seq_len+compressed_dim), nhid*compressed_dim)
-        # self.hidden_compress_norm = nn.LayerNorm(nhid * compressed_dim)
-        # self.key_compress_norm = nn.LayerNorm(nhid * compressed_dim)
-        # self.value_compress_norm = nn.LayerNorm(nhid * compressed_dim)
-        
-        # Replace the linear layers with adaptive pooling (no parameters!)
-        self.hidden_pool = nn.AdaptiveAvgPool1d(compressed_dim)
-        self.key_pool = nn.AdaptiveAvgPool1d(compressed_dim) 
-        self.value_pool = nn.AdaptiveAvgPool1d(compressed_dim)
+        self.tanh = nn.Tanh()
 
-        # Replace the layer norms (much smaller now)
+        self.q = nn.Linear(ninp + nhid, nhid)
+        self.q_norm = nn.LayerNorm(nhid)
+
+        self.intermediate_h = nn.Linear(nhid*3 + ninp, nhid*4)
+        self.int_norm = nn.LayerNorm(nhid*4)
+        self.f_norm = nn.LayerNorm(nhid*3)
+        self.final_h = nn.Linear(nhid*4, nhid*3)
+
+        self.decoder = nn.Linear(nhid, ntoken+1)
+        self.multihead_attn = MultiheadAttention(embed_dim=nhid, num_heads=nheads, batch_first=True)
+
+        # Adaptive pooling for cache compression
+        self.hidden_pool = nn.AdaptiveAvgPool1d(compressed_dim)
+        self.key_pool = nn.AdaptiveAvgPool1d(compressed_dim)
+        self.value_pool = nn.AdaptiveAvgPool1d(compressed_dim)
         self.hidden_compress_norm = nn.LayerNorm(nhid)
         self.key_compress_norm = nn.LayerNorm(nhid)
         self.value_compress_norm = nn.LayerNorm(nhid)
-        
-        # self.hidden_compress = nn.Linear(nhid * seq_len, nhid * compressed_dim)
-        # self.key_compress = nn.Linear(nhid * seq_len, nhid * compressed_dim) 
-        # self.value_compress = nn.Linear(nhid * seq_len, nhid * compressed_dim)
-        
-        # self.hidden_compress_norm = nn.LayerNorm(nhid * compressed_dim)
-        # self.key_compress_norm = nn.LayerNorm(nhid * compressed_dim)
-        # self.value_compress_norm = nn.LayerNorm(nhid * compressed_dim)
+
         # Training hyperparameters
         self.learning_rate = learning_rate
-        self.temperature = temperature
-        self.gumbel_softmax = gumbel_softmax
         self.criterion = criterion
-        self.optimizer_type = optimizer_type
-        self.weight_decay = weight_decay
-        self.scheduler_type = scheduler_type
-        
+        self.epoch_cache = None
+
         self.init_weights()
 
     def init_weights(self):
-        """Initialize model weights for better training dynamics"""
         for name, param in self.named_parameters():
             if "weight" in name:
                 if "norm" in name:
                     nn.init.ones_(param)
-                elif "encoder" in name:
-                    nn.init.normal_(param, mean=0, std=0.1)
-                elif "decoder" in name:
-                    nn.init.normal_(param, mean=0, std=0.1)
-                elif "compress" in name:
-                    nn.init.xavier_uniform_(param)
+                elif "encoder" in name or "decoder" in name:
+                    nn.init.normal_(param, 0, 0.1)
                 else:
                     nn.init.kaiming_normal_(param, mode="fan_in", nonlinearity="tanh")
             elif "bias" in name:
                 nn.init.zeros_(param)
 
+    # ----------------------
+    # Cache handling
+    # ----------------------
     def init_cache(self, observation):
-        """Initialize hidden state and attention caches"""
-        if len(observation.size()) > 1:
-            bsz = observation.size(dim=-1)
-        else:
-            bsz = 1
-
-        hidden = torch.zeros(self.compressed_dim, bsz, self.nhid, device=self.device) 
-        key_cache = torch.zeros(bsz, self.compressed_dim, self.nhid, device=self.device) 
-        value_cache = torch.zeros(bsz, self.compressed_dim, self.nhid, device=self.device) 
+        bsz = observation.size(1) if len(observation.size()) > 1 else 1
+        hidden = torch.zeros(self.compressed_dim, bsz, self.nhid, device=self.device)
+        key_cache = torch.zeros(bsz, self.compressed_dim, self.nhid, device=self.device)
+        value_cache = torch.zeros(bsz, self.compressed_dim, self.nhid, device=self.device)
         return hidden, key_cache, value_cache
 
-    def update_cache(self, key_cache, value_cache, hidden, key_cache_i, value_cache_i, hidden_i):
-        hidden_i = hidden_i.unsqueeze(0)
-        hidden = torch.cat((hidden, hidden_i), dim=0)
-        key_cache_i = key_cache_i.unsqueeze(1)
-        value_cache_i = value_cache_i.unsqueeze(1)
-        key_cache = torch.cat((key_cache, key_cache_i), dim=1)
-        value_cache = torch.cat((value_cache, value_cache_i), dim=1)
-            
+    def update_cache(self, key_cache, value_cache, hidden, key_i, value_i, hidden_i):
+        hidden = torch.cat((hidden, hidden_i.unsqueeze(0)), dim=0)
+        key_cache = torch.cat((key_cache, key_i.unsqueeze(1)), dim=1)
+        value_cache = torch.cat((value_cache, value_i.unsqueeze(1)), dim=1)
         return key_cache, value_cache, hidden
 
-    # def compress_cache(self, hidden, key_cache, value_cache):
-    #     """
-    #     Learned projection from [bsz, seq_len, nhid] to [bsz, compressed_dim, nhid]
-    #     """
-
-    #     # For hidden: [seq_len, batch, nhid] -> [batch, seq_len, nhid] -> [batch, compressed_dim, nhid] -> [compressed_dim, batch, nhid]
-    #     hidden_reshaped = hidden.transpose(0, 1)  # [batch, seq_len, nhid]
-    #     batch_size, seq_len, nhid = hidden_reshaped.shape
-        
-    #     hidden_new = hidden_reshaped
-      
-    
-    #     hidden_flat = hidden_new.reshape(batch_size, -1) 
- 
-    #     hidden_proj = self.drop(self.tanh(self.hidden_compress_norm(self.hidden_compress(hidden_flat))))  # [batch, nhid * compressed_dim]
-    #     hidden_compressed = hidden_proj.reshape(batch_size, self.compressed_dim, nhid)  # [batch, compressed_dim, nhid]
-    #     hidden_compressed = hidden_compressed.transpose(0, 1)  # [compressed_dim, batch, nhid]
-        
-    #     key_new = key_cache
-    #     key_flat = key_new.reshape(batch_size, -1)  # [batch, seq_len * nhid]
-    #     key_proj = self.drop(self.tanh(self.key_compress_norm(self.key_compress(key_flat))))  # [batch, nhid * compressed_dim]
-    #     key_compressed = key_proj.reshape(batch_size, self.compressed_dim, nhid)  # [batch, compressed_dim, nhid]
-        
-    #     value_new = value_cache
-    #     value_flat = value_new.reshape(batch_size, -1)  # [batch, seq_len * nhid]
-    #     value_proj = self.drop(self.tanh(self.value_compress_norm(self.value_compress(value_flat))))  # [batch, nhid * compressed_dim]
-    #     value_compressed = value_proj.reshape(batch_size, self.compressed_dim, nhid)  # [batch, compressed_dim, nhid]
-        
-    #     return hidden_compressed, key_compressed, value_compressed
     def compress_cache(self, hidden, key_cache, value_cache):
-        """
-        Adaptive pooling compression from any seq_len to compressed_dim
-        """
-        # For hidden: [seq_len, batch, nhid] -> [compressed_dim, batch, nhid]
-        hidden_reshaped = hidden.transpose(0, 1).transpose(1, 2)  # -> [batch, nhid, seq_len]
-        hidden_pooled = self.hidden_pool(hidden_reshaped)  # -> [batch, nhid, compressed_dim]
-        hidden_pooled = hidden_pooled.transpose(1, 2)  # -> [batch, compressed_dim, nhid]
-        hidden_compressed = self.drop(self.tanh(self.hidden_compress_norm(hidden_pooled)))
-        hidden_compressed = hidden_compressed.transpose(0, 1)  # -> [compressed_dim, batch, nhid]
-        
-        # For key_cache: [batch, seq_len, nhid] -> [batch, compressed_dim, nhid]
-        key_transposed = key_cache.transpose(1, 2)  # -> [batch, nhid, seq_len]
-        key_pooled = self.key_pool(key_transposed)  # -> [batch, nhid, compressed_dim]
-        key_compressed = key_pooled.transpose(1, 2)  # -> [batch, compressed_dim, nhid]
-        key_compressed = self.drop(self.tanh(self.key_compress_norm(key_compressed)))
-        
-        # For value_cache: [batch, seq_len, nhid] -> [batch, compressed_dim, nhid]
-        value_transposed = value_cache.transpose(1, 2)  # -> [batch, nhid, seq_len]
-        value_pooled = self.value_pool(value_transposed)  # -> [batch, nhid, compressed_dim]
-        value_compressed = value_pooled.transpose(1, 2)  # -> [batch, compressed_dim, nhid]
-        value_compressed = self.drop(self.tanh(self.value_compress_norm(value_compressed)))
-        
+        # hidden: [seq_len, batch, nhid] -> [compressed_dim, batch, nhid]
+        h = self.hidden_pool(hidden.transpose(0,1).transpose(1,2)).transpose(1,2)
+        hidden_compressed = self.drop(self.tanh(self.hidden_compress_norm(h))).transpose(0,1)
+
+        # key_cache: [batch, seq_len, nhid] -> [batch, compressed_dim, nhid]
+        k = self.key_pool(key_cache.transpose(1,2)).transpose(1,2)
+        key_compressed = self.drop(self.tanh(self.key_compress_norm(k)))
+
+        # value_cache: [batch, seq_len, nhid] -> [batch, compressed_dim, nhid]
+        v = self.value_pool(value_cache.transpose(1,2)).transpose(1,2)
+        value_compressed = self.drop(self.tanh(self.value_compress_norm(v)))
+
         return hidden_compressed, key_compressed, value_compressed
-    # def compress_cache(self, hidden, key_cache, value_cache):
-    # # Just truncate instead of compress
-    #     return hidden[-self.compressed_dim:], key_cache[:, -self.compressed_dim:], value_cache[:, -self.compressed_dim:]
 
-    def intermediate_layers(self, i, emb, query, attn, hidden):
-
-        intermediate_input = torch.cat((emb[i], query, attn, hidden[-1]), -1)
-        intermediate = self.drop(
-            self.tanh(self.int_norm(self.intermediate_h(intermediate_input)))
-        )
-        final_output = self.drop(self.tanh(self.f_norm(self.final_h(intermediate))))
-        key_cache_i, value_cache_i, hidden_i = final_output.split(self.nhid, dim=-1)
-        return key_cache_i, value_cache_i, hidden_i
-
+    # ----------------------
+    # Forward
+    # ----------------------
     def get_query(self, emb, hidden):
         combined = torch.cat((emb, hidden[-1]), -1)
-        query = self.drop(self.tanh(self.q_norm(self.q(combined))))
-        query = query.unsqueeze(1)
-        return query
-    
+        q = self.drop(self.tanh(self.q_norm(self.q(combined))))
+        return q.unsqueeze(1)
 
+    def intermediate_layers(self, i, emb, query, attn, hidden):
+        inter_input = torch.cat((emb[i], query, attn, hidden[-1]), -1)
+        inter = self.drop(self.tanh(self.int_norm(self.intermediate_h(inter_input))))
+        final = self.drop(self.tanh(self.f_norm(self.final_h(inter))))
+        k_i, v_i, h_i = final.split(self.nhid, dim=-1)
+        return k_i, v_i, h_i
 
-    def forward(self, observation, initial_cache=None, nheads=None, temperature=None, gumbel_softmax=None):
-        # Use instance variables if not provided
-        # nheads = nheads if nheads is not None else self.nheads
-        # temperature = temperature if temperature is not None else self.temperature
-        # gumbel_softmax = gumbel_softmax if gumbel_softmax is not None else self.gumbel_softmax
-        # Add this debugging code before the encoder call
-        
-        # Check encoder vocab size
-        encoder_vocab_size = self.encoder.num_embeddings
-        print(f"DEBUG: encoder vocab size: {encoder_vocab_size}")
-        
-        # Check for out-of-bounds indices
-        max_token = observation.max().item()
-        if max_token >= encoder_vocab_size:
-            print(f"ERROR: Token {max_token} >= vocab size {encoder_vocab_size}")
-            print(f"Out-of-bounds tokens: {observation[observation >= encoder_vocab_size]}")
-            
-            # TEMPORARY FIX: Clamp to valid range
-            observation = torch.clamp(observation, 0, encoder_vocab_size - 1)
-            print("Applied clamping to fix out-of-bounds tokens")
-            
+    def forward(self, observation, initial_cache=None):
         seq_len = observation.size(0)
-    
-        if initial_cache is not None:
-            hidden, key_cache, value_cache = initial_cache
-        else:
-            # Fallback to fresh cache if none provided
-            hidden, key_cache, value_cache = self.init_cache(observation)
-            
-
+        hidden, key_cache, value_cache = initial_cache if initial_cache else self.init_cache(observation)
         emb = self.drop(self.encoder(observation))
+
         for i in range(seq_len):
             query = self.get_query(emb[i], hidden)
-            attn_output,_= self.multihead_attn(query, key_cache, value_cache, temperature, gumbel_softmax, need_weights=False)
-            attn_output, query=attn_output.squeeze(1), query.squeeze(1)
-            key_cache_i, value_cache_i, hidden_i = self.intermediate_layers(i, emb, query, attn_output, hidden)
-            key_cache, value_cache, hidden = self.update_cache(key_cache, value_cache, hidden, key_cache_i, value_cache_i, hidden_i)
-        # decoded = self.decoder(hidden[1:])
-  
+            attn_out, _ = self.multihead_attn(query, key_cache, value_cache, self.temperature, self.gumbel_softmax, need_weights=False)
+            attn_out = attn_out.squeeze(1)
+            query = query.squeeze(1)
+            k_i, v_i, h_i = self.intermediate_layers(i, emb, query, attn_out, hidden)
+            key_cache, value_cache, hidden = self.update_cache(key_cache, value_cache, hidden, k_i, v_i, h_i)
+
         decoded = self.decoder(hidden[-self.seq_len:]).transpose(0,1)
         cache = self.compress_cache(hidden, key_cache, value_cache)
         return decoded, cache
-    
-    def on_train_epoch_start(self):
-        """Update temperature at the start of each training epoch"""
-        if self.gumbel_softmax:
-           self.temp_scheduler.step()
-           self.temperature = self.temp_scheduler.get_temperature()
-           
-    def on_train_epoch_end(self):
-        """Reset cache at the end of each epoch"""
-        self.epoch_cache = None
-        
-    def training_step(self, batch, batch_idx):
-        # Extract data and targets from batch
-        data, targets = batch
-        print('data', data.shape)
-        print('targets', targets.shape)
-        data = data.transpose(0,1)
-        targets = targets.transpose(0,1)
-        # data = data.transpose(0,1)
-        # targets = targets.transpose(0,1)
 
-        # Initialize cache once per epoch or use existing epoch cache
-        # if self.epoch_cache is None:
-        #     # Initialize cache once per epoch
-        #     self.epoch_cache = tuple(c.detach().clone() for c in self.init_cache(data))
-        # else:
-        #     # Detach from computational graph but keep values
-        #     hidden, key_cache, value_cache = self.epoch_cache
-        #     self.epoch_cache = (
-        #         hidden.clone(),
-        #         key_cache.clone(), 
-        #         value_cache.clone()
-        #     )
+    # ----------------------
+    # Shared step for all stages
+    # ----------------------
+    def _shared_step(self, batch, stage):
+        data, targets = batch
+        data, targets = data.transpose(0,1), targets.transpose(0,1)
         if self.epoch_cache is None:
             self.epoch_cache = self.init_cache(data)
-        
-        # # Use the persistent cache but ensure gradients can flow
-        # cache = self.epoch_cache
-        
-        # Forward pass
-        output, new_cache = self.forward(
-            data, 
-            initial_cache= self.epoch_cache, 
-            nheads=self.nheads, 
-            temperature=self.temperature, 
-            gumbel_softmax=self.gumbel_softmax
-        )
-        
-        if new_cache is not None:
-            self.epoch_cache = tuple(c.detach().clone() for c in new_cache)
-            
-        
-        # Reshape outputs and targets for loss computation
-        output_flat = output.reshape(-1, output.size(-1))
-        targets_flat = targets.reshape(-1)
-        
-        # Calculate loss
-        if self.criterion == 'cross_entropy':
-            loss = F.cross_entropy(output_flat, targets_flat)
-        else:
-            raise ValueError(f"Unsupported criterion: {self.criterion}")
-        
-        # Calculate perplexity for logging
-        ppl = torch.exp(loss)
-        
-        # Log metrics
-        self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True)
-        self.log('train_ppl', ppl, prog_bar=True, on_step=True, on_epoch=True)
-        self.log('temperature', self.temperature, on_step=True)
-        
-        # --- Gradient norm (whole model) ---
-        if self.global_step > 0:  # skip first step before backward
-            total_grad_norm = torch.norm(
-                torch.stack([p.grad.detach().data.norm(2)
-                             for p in self.model.parameters() if p.grad is not None]), 2
-            ) if any(p.grad is not None for p in self.model.parameters()) else torch.tensor(0.0)
-            self.log("grad_norm_total", total_grad_norm, on_step=True)
 
-        # --- Weight & grad norms per parameter ---
-        for name, p in self.named_parameters():
-            if p.requires_grad:
-                w_norm = p.data.norm(2)
-                self.log(f"weight_norm/{name}", w_norm, on_step=True)
+        output, self.epoch_cache = self.forward(data, initial_cache=self.epoch_cache)
+        output_flat, targets_flat = output.reshape(-1, output.size(-1)), targets.reshape(-1)
+        loss = F.cross_entropy(output_flat, targets_flat)
+        ppl = torch.exp(loss)
 
-                if p.grad is not None:
-                    g_norm = p.grad.data.norm(2)
-                    self.log(f"grad_norm/{name}", g_norm, on_step=True)
-        
-        return loss
-    
-    
-    def validation_step(self, batch, batch_idx):
-        """Validation step for PyTorch Lightning"""
-        # Extract data and targets from batch
-        data, targets = batch
-        data = data.transpose(0,1)
-        targets = targets.transpose(0,1)
-        # Initialize cache for CBR_RNN
-        cache = self.init_cache(data)
-        
-        # Forward pass
-        output, _ = self.forward(
-            data, 
-            initial_cache=cache, 
-            nheads=self.nheads, 
-            temperature=self.temperature, 
-            gumbel_softmax=self.gumbel_softmax
-        )
-        
-        # Reshape outputs and targets for loss computation
-        output_flat = output.reshape(-1, output.size(-1))
-        targets_flat = targets.reshape(-1)
-        
-        # Calculate loss
-        if self.criterion == 'cross_entropy':
-            loss = F.cross_entropy(output_flat, targets_flat)
-        else:
-            raise ValueError(f"Unsupported criterion: {self.criterion}")
-        
-        # Calculate perplexity for logging
-        ppl = torch.exp(loss)
-        
-        # Log metrics
-        self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
-        self.log('val_ppl', ppl, prog_bar=True, on_step=False, on_epoch=True)
-        
-        return loss
-    
-    def test_step(self, batch, batch_idx):
-        """Test step for PyTorch Lightning"""
-        # Extract data and targets from batch
-        data, targets = batch
-        data = data.transpose(0,1)
-        targets = targets.transpose(0,1)
-        # Initialize cache for CBR_RNN
-        cache = self.init_cache(data)
-        
-        # Forward pass
-        output, _ = self.forward(
-            data, 
-            initial_cache=cache, 
-            nheads=self.nheads, 
-            temperature=self.temperature, 
-            gumbel_softmax=self.gumbel_softmax
-        )
-        
-        # Reshape outputs and targets for loss computation
-        output_flat = output.reshape(-1, output.size(-1))
-        targets_flat = targets.reshape(-1)
-        
-        # Calculate loss
-        if self.criterion == 'cross_entropy':
-            loss = F.cross_entropy(output_flat, targets_flat)
-        else:
-            raise ValueError(f"Unsupported criterion: {self.criterion}")
-        
-        # Calculate perplexity for logging
-        ppl = torch.exp(loss)
-        
-        # Log metrics
-        self.log('test_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
-        self.log('test_ppl', ppl, prog_bar=True, on_step=False, on_epoch=True)
-        
+        self.log(f"{stage}_loss", loss, prog_bar=(stage=="train"), on_step=(stage=="train"), on_epoch=True)
+        self.log(f"{stage}_ppl", ppl, prog_bar=True, on_step=(stage=="train"), on_epoch=True)
         return loss
 
+    def training_step(self, batch, batch_idx): return self._shared_step(batch, "train")
+    def validation_step(self, batch, batch_idx): return self._shared_step(batch, "val")
+    def test_step(self, batch, batch_idx): return self._shared_step(batch, "test")
+
+    def on_train_epoch_end(self): self.epoch_cache = None
+
+    # ----------------------
+    # Optimizers & schedulers
+    # ----------------------
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.hparams.learning_rate, weight_decay=0.1)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000)
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss"
-            }
-        }
-    
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "monitor": "val_loss"}}
+
 ##########################################################################################################################
 #TRANSFORMER
 ##########################################################################################################################
