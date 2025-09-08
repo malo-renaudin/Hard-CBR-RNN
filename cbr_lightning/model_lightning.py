@@ -458,12 +458,23 @@ class TransformerBlock(nn.Module):
 
 class Transformer(pl.LightningModule):
     def __init__(self, vocab_size, d_model, n_heads, n_layers, 
-                 d_ff, max_seq_len, dropout, temperature, gumbel_softmax, learning_rate):
+                 d_ff, max_seq_len, dropout, temperature, gumbel_softmax, learning_rate, temp_decay_rate=0.95, temp_final=0.1):
         super().__init__()
         self.save_hyperparameters()
         
         self.d_model = d_model
         self.vocab_size = vocab_size
+        
+        self.temperature = temperature
+        self.gumbel_softmax = gumbel_softmax
+        self.temp_decay_rate = temp_decay_rate
+        self.temp_final = temp_final
+        
+        self.temp_scheduler = TemperatureScheduler(
+            initial_temp=temperature,
+            decay_rate=temp_decay_rate,
+            final_temp=temp_final
+        )
         
         # Token embeddings
         self.token_embedding = nn.Embedding(vocab_size, d_model)
@@ -475,8 +486,7 @@ class Transformer(pl.LightningModule):
             for _ in range(n_layers)
         ])
         
-        self.temperature = temperature
-        self.gumbel_softmax = gumbel_softmax
+        
         
         # Output projection
         self.ln_f = nn.LayerNorm(d_model)
