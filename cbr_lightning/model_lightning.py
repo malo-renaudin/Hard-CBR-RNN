@@ -88,10 +88,13 @@ class CBR_RNN(pl.LightningModule):
                     nn.init.ones_(param)
                 elif "encoder" in name or "decoder" in name:
                     nn.init.normal_(param, 0, 0.1)
+                elif "multihead_attn" in name:
+                    nn.init.xavier_uniform_(param)
                 else:
-                    nn.init.kaiming_normal_(param, mode="fan_in", nonlinearity="tanh")
+                    nn.init.kaiming_normal_(param, mode="fan_in", nonlinearity="relu")
             elif "bias" in name:
                 nn.init.zeros_(param)
+
 
     # ----------------------
     # Cache handling
