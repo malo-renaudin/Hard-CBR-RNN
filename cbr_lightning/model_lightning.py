@@ -167,7 +167,7 @@ class CBR_RNN(pl.LightningModule):
         output, new_cache = self.forward(data, initial_cache=self.epoch_cache)
         
         if new_cache is not None:
-            self.epoch_cache = tuple(c.detach() for c in new_cache)
+            self.epoch_cache = tuple(c.detach().clone() for c in new_cache)
             
         output_flat, targets_flat = output.reshape(-1, output.size(-1)), targets.reshape(-1)
         loss = F.cross_entropy(output_flat, targets_flat)
