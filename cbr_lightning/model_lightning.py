@@ -145,6 +145,33 @@ class CBR_RNN(pl.LightningModule):
      # ----------------------
     # Training metrics computation
     # ----------------------
+    def compute_vocabulary_metrics(self, observation):
+        """Compute vocabulary-related metrics"""
+        metrics = {}
+        
+        # Assuming UNK token has ID 0 (adjust based on your tokenizer)
+        unk_token_id = 32  # Change this to your actual UNK token ID
+        
+        # Count UNK tokens
+        total_tokens = observation.numel()
+        unk_count = (observation == unk_token_id).sum().item()
+        unk_percentage = (unk_count / total_tokens) * 100 if total_tokens > 0 else 0
+        
+        # Vocabulary coverage
+        unique_tokens = torch.unique(observation).numel()
+        
+        metrics['unk_percentage'] = unk_percentage
+        metrics['unique_tokens_in_batch'] = unique_tokens
+        metrics['total_tokens_in_batch'] = total_tokens
+        
+        # Token distribution entropy
+        token_counts = torch.bincount(observation.flatten())
+        token_probs = token_counts.float() / token_counts.sum()
+        token_probs = token_probs[token_probs > 0]  # Remove zeros
+        token_entropy = -(token_probs * torch.log(token_probs)).sum().item()
+        metrics['token_entropy'] = token_entropy
+        
+        return metrics
     def compute_gradient_metrics(self):
         """Compute gradient-related metrics"""
         total_norm = 0.0
@@ -290,6 +317,10 @@ class CBR_RNN(pl.LightningModule):
     # ----------------------
     def _shared_step(self, batch, stage):
         data, targets = batch
+        vocab_metrics = self.compute_vocabulary_metrics(data)
+        for k, v in vocab_metrics.items():
+            self.log(f"{stage}_{k}", v, on_step=True, on_epoch=True, prog_bar=False)
+
         data, targets = data.transpose(0,1), targets.transpose(0,1)
         if self.epoch_cache is None:
             self.epoch_cache = self.init_cache(data)
