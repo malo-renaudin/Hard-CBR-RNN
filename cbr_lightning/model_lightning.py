@@ -477,7 +477,7 @@ class Transformer(pl.LightningModule):
         )
         
         # Token embeddings
-        self.token_embedding = nn.Embedding(vocab_size, d_model)
+        self.token_embedding = nn.Embedding(vocab_size+1, d_model)
         self.pos_encoding = PositionalEncoding(d_model, max_seq_len)
         
         # Transformer blocks
@@ -490,7 +490,7 @@ class Transformer(pl.LightningModule):
         
         # Output projection
         self.ln_f = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, vocab_size, bias=False)
+        self.head = nn.Linear(d_model, vocab_size+1, bias=False)
         
         self.dropout = nn.Dropout(dropout)
         
