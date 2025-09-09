@@ -10,7 +10,8 @@ import itertools
 from pathlib import Path
 from typing import Dict, Any, List
 import argparse
-import pickle 
+import pickle
+
 
 def get_vocabulary_size(tokenizer_path: str) -> int:
     """Automatically detect vocabulary size from tokenizer"""
@@ -19,30 +20,31 @@ def get_vocabulary_size(tokenizer_path: str) -> int:
         if not tokenizer_path.exists():
             print(f"Warning: Tokenizer file {tokenizer_path} not found")
             return 50000
-            
+
         print(f"Loading tokenizer from: {tokenizer_path}")
-        
+
         # Handle different tokenizer formats
         if tokenizer_path.suffix == '.pkl':
             with open(tokenizer_path, 'rb') as f:
                 tokenizer = pickle.load(f)
-        
-        
+
         # Try different methods to get vocab size
         # vocab_size = None
         vocab_size = tokenizer['vocab_size']
-            
+
         if vocab_size is None:
-            print(f"Warning: Could not determine vocab size from {tokenizer_path}")
+            print(
+                f"Warning: Could not determine vocab size from {tokenizer_path}")
             return 50000
-            
+
         print(f"Detected vocabulary size: {vocab_size}")
         return vocab_size
-            
+
     except Exception as e:
         print(f"Error loading tokenizer from {tokenizer_path}: {e}")
         print("Using default vocabulary size: 50000")
         return 50000
+
 
 def ask_question(question: str, options: List[str] = None, default: str = None, data_type: type = str):
     """Ask a question with optional validation"""
@@ -60,19 +62,20 @@ def ask_question(question: str, options: List[str] = None, default: str = None, 
                 prompt = f"{question} [default: {default}]: "
             else:
                 prompt = f"{question}: "
-        
+
         response = input(prompt).strip()
-        
+
         if not response and default:
             return default if not options else options[int(default) - 1]
-        
+
         if options:
             try:
                 choice = int(response)
                 if 1 <= choice <= len(options):
                     return options[choice - 1]
                 else:
-                    print(f"Please enter a number between 1 and {len(options)}")
+                    print(
+                        f"Please enter a number between 1 and {len(options)}")
                     continue
             except ValueError:
                 print("Please enter a valid number")
@@ -96,13 +99,13 @@ def ask_list_values(question: str, data_type: type = str, min_values: int = 1):
     """Ask for multiple values for grid search"""
     print(f"\n{question}")
     print("Enter values separated by commas (e.g., 0.001,0.01,0.1)")
-    
+
     while True:
         response = input("Values: ").strip()
         if not response:
             print("Please enter at least one value")
             continue
-            
+
         try:
             values = [data_type(v.strip()) for v in response.split(',')]
             if len(values) < min_values:
@@ -119,27 +122,27 @@ def configure_basic_settings():
     print("\n" + "="*50)
     print("BASIC TRAINING CONFIGURATION")
     print("="*50)
-    
+
     config = {}
-    
+
     # Dataset configuration
     print("\n--- Dataset Configuration ---")
     config['dataset_path'] = ask_question(
-        "Dataset path", 
+        "Dataset path",
         default="cbr_lightning/wikitext-103-tokenized"
     )
     config['tokenizer_path'] = ask_question(
-        "Tokenizer path", 
+        "Tokenizer path",
         default="./tokenizer.pkl"
     )
-    
+
     print("\n--- Vocabulary Configuration ---")
     auto_detect = ask_question(
         "Auto-detect vocabulary size from tokenizer?",
         options=["yes", "no"],
         default="1"
     ) == "yes"
-    
+
     if auto_detect:
         try:
             vocab_size = get_vocabulary_size(config['tokenizer_path'])
@@ -148,35 +151,35 @@ def configure_basic_settings():
         except Exception as e:
             print(f"Failed to auto-detect vocabulary size: {e}")
             config['vocab_size'] = ask_question(
-                "Enter vocabulary size manually", 
-                default="50000", 
+                "Enter vocabulary size manually",
+                default="50000",
                 data_type=int
             )
     else:
         config['vocab_size'] = ask_question(
-            "Vocabulary size", 
-            default="50000", 
+            "Vocabulary size",
+            default="50000",
             data_type=int
         )
-    
+
     # Training basics
     print("\n--- Training Configuration ---")
     config['max_epochs'] = ask_question(
-        "Maximum epochs", 
-        default="50", 
+        "Maximum epochs",
+        default="50",
         data_type=int
     )
     config['batch_size'] = ask_question(
-        "Batch size", 
-        default="512", 
+        "Batch size",
+        default="512",
         data_type=int
     )
     config['max_length'] = ask_question(
-        "Maximum sequence length", 
-        default="128", 
+        "Maximum sequence length",
+        default="128",
         data_type=int
     )
-    
+
     # Hardware configuration
     print("\n--- Hardware Configuration ---")
     config['precision'] = ask_question(
@@ -185,18 +188,18 @@ def configure_basic_settings():
         default="2"
     )
     config['num_workers'] = ask_question(
-        "Number of data workers", 
-        default="4", 
+        "Number of data workers",
+        default="4",
         data_type=int
     )
-    
+
     return config
 
 
 def configure_model_params(model_type: str):
     """Configure model-specific parameters"""
     print(f"\n--- {model_type} Model Configuration ---")
-    
+
     if model_type == "CBR_RNN":
         return configure_cbr_rnn()
     elif model_type == "Transformer":
@@ -208,49 +211,67 @@ def configure_model_params(model_type: str):
 def configure_cbr_rnn():
     """Configure CBR_RNN specific parameters"""
     config = {}
-    
+
     # Architecture parameters
-    config['ninp'] = ask_question("Embedding dimension", default="256", data_type=int)
-    config['nhid'] = ask_question("Hidden dimension", default="512", data_type=int)
-    config['nheads'] = ask_question("Number of attention heads", default="4", data_type=int)
-    config['compressed_dim'] = ask_question("Compressed dimension", default="32", data_type=int)
-    config['dropout'] = ask_question("Dropout rate", default="0.1", data_type=float)
-    
+    config['ninp'] = ask_question(
+        "Embedding dimension", default="256", data_type=int)
+    config['nhid'] = ask_question(
+        "Hidden dimension", default="512", data_type=int)
+    config['nheads'] = ask_question(
+        "Number of attention heads", default="4", data_type=int)
+    config['compressed_dim'] = ask_question(
+        "Compressed dimension", default="32", data_type=int)
+    config['dropout'] = ask_question(
+        "Dropout rate", default="0.1", data_type=float)
+
     # CBR-specific parameters
-    config['temperature'] = ask_question("Temperature", default="1.0", data_type=float)
-    config['gumbel_softmax'] = ask_question("Use Gumbel softmax", default="false", data_type=bool)
-    
+    config['temperature'] = ask_question(
+        "Temperature", default="1.0", data_type=float)
+    config['gumbel_softmax'] = ask_question(
+        "Use Gumbel softmax", default="false", data_type=bool)
+
     if config['gumbel_softmax']:
-        config['temp_decay_rate'] = ask_question("Temperature decay rate", default="0.95", data_type=float)
-        config['temp_final'] = ask_question("Final temperature", default="0.1", data_type=float)
-    
+        config['temp_decay_rate'] = ask_question(
+            "Temperature decay rate", default="0.95", data_type=float)
+        config['temp_final'] = ask_question(
+            "Final temperature", default="0.1", data_type=float)
+
     return config
 
 
 def configure_transformer():
     """Configure Transformer specific parameters"""
     config = {}
-    
-    config['d_model'] = ask_question("Model dimension (d_model)", default="384", data_type=int)
-    config['n_heads'] = ask_question("Number of attention heads", default="8", data_type=int)
-    config['n_layers'] = ask_question("Number of layers", default="6", data_type=int)
-    config['d_ff'] = ask_question("Feed-forward dimension", default="1536", data_type=int)
-    config['dropout'] = ask_question("Dropout rate", default="0.1", data_type=float)
-    
+
+    config['d_model'] = ask_question(
+        "Model dimension (d_model)", default="384", data_type=int)
+    config['n_heads'] = ask_question(
+        "Number of attention heads", default="8", data_type=int)
+    config['n_layers'] = ask_question(
+        "Number of layers", default="6", data_type=int)
+    config['d_ff'] = ask_question(
+        "Feed-forward dimension", default="1536", data_type=int)
+    config['dropout'] = ask_question(
+        "Dropout rate", default="0.1", data_type=float)
+
     # Transformer-specific parameters
-    config['temperature'] = ask_question("Temperature", default="1.0", data_type=float)
-    config['gumbel_softmax'] = ask_question("Use Gumbel softmax", default="false", data_type=bool)
-    
+    config['temperature'] = ask_question(
+        "Temperature", default="1.0", data_type=float)
+    config['gumbel_softmax'] = ask_question(
+        "Use Gumbel softmax", default="false", data_type=bool)
+
     return config
 
 
 def configure_lstm():
     """Configure LSTM specific parameters"""
     config = {}
-    
-    config['embedding_dim'] = ask_question("Embedding dimension", default="256", data_type=int)
-    config['hidden_dim'] = ask_question("Hidden dimension", default="512", data_type=int)
-    
+
+    config['embedding_dim'] = ask_question(
+        "Embedding dimension", default="256", data_type=int)
+    config['hidden_dim'] = ask_question(
+        "Hidden dimension", default="512", data_type=int)
+
     return config
 
 
@@ -259,41 +280,43 @@ def configure_grid_search():
     print("\n" + "="*50)
     print("GRID SEARCH CONFIGURATION")
     print("="*50)
-    
+
     enable_grid_search = ask_question(
-        "Enable grid search?", 
-        options=["yes", "no"], 
+        "Enable grid search?",
+        options=["yes", "no"],
         default="1"
     ) == "yes"
-    
+
     if not enable_grid_search:
         return {}
-    
+
     print("\nSelect parameters to grid search over:")
     print("You can specify multiple values for each parameter")
-    
+
     grid_params = {}
-    
+
     # Learning rate
     if ask_question("Grid search learning rate?", options=["yes", "no"], default="1") == "yes":
         grid_params['learning_rate'] = ask_list_values("Learning rates", float)
-    
+
     # Weight decay
     if ask_question("Grid search weight decay?", options=["yes", "no"], default="2") == "yes":
-        grid_params['weight_decay'] = ask_list_values("Weight decay values", float)
-    
+        grid_params['weight_decay'] = ask_list_values(
+            "Weight decay values", float)
+
     # Gradient clipping
     if ask_question("Grid search gradient clipping?", options=["yes", "no"], default="2") == "yes":
-        grid_params['gradient_clip_val'] = ask_list_values("Gradient clip values", float)
-    
+        grid_params['gradient_clip_val'] = ask_list_values(
+            "Gradient clip values", float)
+
     # Batch size
     if ask_question("Grid search batch size?", options=["yes", "no"], default="2") == "yes":
         grid_params['batch_size'] = ask_list_values("Batch sizes", int)
-    
+
     # Dropout (if applicable)
     if ask_question("Grid search dropout?", options=["yes", "no"], default="2") == "yes":
         grid_params['dropout'] = ask_list_values("Dropout rates", float)
-    
+
     return grid_params
 
 
@@ -304,18 +327,18 @@ def generate_config_combinations(base_config: Dict, grid_params: Dict) -> List[D
         config = base_config.copy()
         config['experiment_name'] = f"{config['model']['type'].lower()}_run_000"
         return [config]
-    
+
     # Get all parameter names and their values
     param_names = list(grid_params.keys())
     param_values = [grid_params[name] for name in param_names]
-    
+
     # Generate all combinations
     combinations = list(itertools.product(*param_values))
-    
+
     configs = []
     for i, combo in enumerate(combinations):
         config = base_config.copy()
-        
+
         # Update config with current combination
         for param_name, param_value in zip(param_names, combo):
             if param_name in ['batch_size', 'gradient_clip_val']:
@@ -324,18 +347,18 @@ def generate_config_combinations(base_config: Dict, grid_params: Dict) -> List[D
             elif param_name in ['learning_rate', 'weight_decay', 'dropout']:
                 # These go in model config
                 config['model']['config'][param_name] = param_value
-        
+
         # Add unique identifier
         config['experiment_name'] = f"{config['model']['type'].lower()}_run_{i:03d}"
-        
+
         configs.append(config)
-    
+
     return configs
 
 
 def create_base_config(basic_settings: Dict, model_type: str, model_config: Dict) -> Dict:
     """Create base configuration structure"""
-    
+
     config = {
         'seed': 42,
         'model': {
@@ -359,7 +382,7 @@ def create_base_config(basic_settings: Dict, model_type: str, model_config: Dict
             'devices': 'auto',
             'precision': basic_settings['precision'],
             'gradient_clip_val': 1,
-            'gradient_clip_algorithm' : "norm",
+            'gradient_clip_algorithm': "norm",
             'accumulate_grad_batches': 2,
             'val_check_interval': 0.5
         },
@@ -383,32 +406,32 @@ def create_base_config(basic_settings: Dict, model_type: str, model_config: Dict
         'run_test': True,
         'save_path': f'./final_models/{model_type.lower()}_final.ckpt'
     }
-    
+
     return config
 
 
 def save_configs_and_create_job_script(configs: List[Dict], output_dir: str = "configs"):
     """Save all configs and create robust job submission system with timeout handling"""
-    
+
     # Create output directory structure
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
     (output_path / "logs").mkdir(exist_ok=True)
     (output_path / "status").mkdir(exist_ok=True)
-    
+
     config_files = []
-    
+
     # Save each config
     for i, config in enumerate(configs):
         filename = f"{config['experiment_name']}.yaml"
         filepath = output_path / filename
-        
+
         with open(filepath, 'w') as f:
             yaml.dump(config, f, default_flow_style=False, indent=2)
-        
+
         config_files.append(str(filepath))
         print(f"Config saved: {filepath}")
-    
+
     # Create main job script with timeout handling
     job_script = f"""#!/bin/bash
 #SBATCH --job-name=lm_training
@@ -509,13 +532,13 @@ fi
 
 exit $TRAINING_EXIT_CODE
 """
-    
+
     # Save main job script
     job_script_path = output_path / "submit_jobs.sh"
     with open(job_script_path, 'w') as f:
         f.write(job_script)
     os.chmod(job_script_path, 0o755)
-    
+
     # Create job monitoring and relaunch script
     monitor_script = f"""#!/bin/bash
 # Job monitoring and relaunch script
@@ -679,12 +702,12 @@ case "${{1:-}}" in
         ;;
 esac
 """
-    
+
     monitor_script_path = output_path / "monitor_and_relaunch.sh"
     with open(monitor_script_path, 'w') as f:
         f.write(monitor_script)
     os.chmod(monitor_script_path, 0o755)
-    
+
     # Create simple submission wrapper
     submit_wrapper = f"""#!/bin/bash
 # Simple submission wrapper with automatic monitoring
@@ -700,22 +723,23 @@ else
     exit 1
 fi
 """
-    
+
     submit_wrapper_path = output_path / "submit_and_monitor.sh"
     with open(submit_wrapper_path, 'w') as f:
         f.write(submit_wrapper)
     os.chmod(submit_wrapper_path, 0o755)
-    
+
     print(f"\nRobust job system created in: {output_path}")
     print(f"Files created:")
     print(f"  - submit_jobs.sh (main job script)")
-    print(f"  - monitor_and_relaunch.sh (monitoring system)")  
+    print(f"  - monitor_and_relaunch.sh (monitoring system)")
     print(f"  - submit_and_monitor.sh (one-click solution)")
     print(f"\nUsage options:")
     print(f"  Simple: cd {output_dir} && ./submit_and_monitor.sh")
     print(f"  Manual: cd {output_dir} && sbatch submit_jobs.sh")
-    print(f"  Monitor: cd {output_dir} && ./monitor_and_relaunch.sh monitor <job_id>")
-    
+    print(
+        f"  Monitor: cd {output_dir} && ./monitor_and_relaunch.sh monitor <job_id>")
+
     return config_files, job_script_path
 
 
@@ -724,42 +748,44 @@ def configure_cross_model_grid_search():
     print("\n" + "="*50)
     print("CROSS-MODEL GRID SEARCH CONFIGURATION")
     print("="*50)
-    
+
     # Select models to include
     print("\nSelect models to include in the grid search:")
     models_to_test = []
-    
+
     if ask_question("Include CBR_RNN?", options=["yes", "no"], default="1") == "yes":
         models_to_test.append("CBR_RNN")
-    
+
     if ask_question("Include Transformer?", options=["yes", "no"], default="1") == "yes":
         models_to_test.append("Transformer")
-    
+
     if ask_question("Include LSTM?", options=["yes", "no"], default="2") == "yes":
         models_to_test.append("LSTM")
-    
+
     if not models_to_test:
         print("No models selected!")
         return {"models": ["CBR_RNN"]}  # Default fallback
-    
+
     grid_params = {"models": models_to_test}
-    
+
     print(f"\nSelected models: {', '.join(models_to_test)}")
     print("\nNow configure parameters to grid search:")
-    
+
     # Embedding dimension (ninp for CBR_RNN/Transformer, embedding_dim for LSTM)
     if ask_question("Grid search embedding dimension?", options=["yes", "no"], default="1") == "yes":
-        grid_params['embedding_dim'] = ask_list_values("Embedding dimensions", int)
-    
+        grid_params['embedding_dim'] = ask_list_values(
+            "Embedding dimensions", int)
+
     # Hidden dimension (nhid for CBR_RNN, d_model for Transformer, hidden_dim for LSTM)
     if ask_question("Grid search hidden dimension?", options=["yes", "no"], default="1") == "yes":
         grid_params['hidden_dim'] = ask_list_values("Hidden dimensions", int)
-    
+
     # Compressed dimension (only for CBR_RNN)
     if "CBR_RNN" in models_to_test:
         if ask_question("Grid search compressed dimension (CBR_RNN only)?", options=["yes", "no"], default="1") == "yes":
-            grid_params['compressed_dim'] = ask_list_values("Compressed dimensions", int)
-    
+            grid_params['compressed_dim'] = ask_list_values(
+                "Compressed dimensions", int)
+
     # Gumbel softmax (for CBR_RNN and Transformer)
     if any(model in models_to_test for model in ["CBR_RNN", "Transformer"]):
         if ask_question("Grid search Gumbel softmax?", options=["yes", "no"], default="1") == "yes":
@@ -767,40 +793,41 @@ def configure_cross_model_grid_search():
             print("1. Both True and False")
             print("2. Only True")
             print("3. Only False")
-            choice = ask_question("Choose", options=["1", "2", "3"], default="1")
+            choice = ask_question(
+                "Choose", options=["1", "2", "3"], default="1")
             if choice == "1":
                 grid_params['gumbel_softmax'] = [True, False]
             elif choice == "2":
                 grid_params['gumbel_softmax'] = [True]
             else:
                 grid_params['gumbel_softmax'] = [False]
-    
+
     # Temperature final (only when Gumbel softmax is True)
     if grid_params.get('gumbel_softmax', [False]) != [False]:
         if ask_question("Grid search final temperature?", options=["yes", "no"], default="1") == "yes":
-            grid_params['temp_final'] = ask_list_values("Final temperatures", float)
-    
+            grid_params['temp_final'] = ask_list_values(
+                "Final temperatures", float)
+
     # Learning rate
     if ask_question("Grid search learning rate?", options=["yes", "no"], default="2") == "yes":
         grid_params['learning_rate'] = ask_list_values("Learning rates", float)
-    
+
     return grid_params
 
 
 def generate_cross_model_configs(basic_settings: Dict, grid_params: Dict) -> List[Dict]:
     """Generate configurations across different models and parameters"""
-    
+
     if 'models' not in grid_params:
         grid_params['models'] = ['CBR_RNN']  # Default
-    
+
     # Separate model list from other parameters
     models = grid_params.pop('models')
     vocab_size = basic_settings.get('vocab_size', 50000)
 
-    
     configs = []
     config_id = 0
-    
+
     # Generate configs for each model
     for model_type in models:
         # Filter parameters relevant to this model
@@ -817,7 +844,7 @@ def generate_cross_model_configs(basic_settings: Dict, grid_params: Dict) -> Lis
                 continue
             else:
                 relevant_params[param_name] = param_values
-        
+
         # Generate parameter combinations for this model
         if relevant_params:
             param_names = list(relevant_params.keys())
@@ -825,34 +852,36 @@ def generate_cross_model_configs(basic_settings: Dict, grid_params: Dict) -> Lis
             param_combinations = list(itertools.product(*param_values))
         else:
             param_combinations = [()]  # Single empty combination
-        
+
         # Create configs for this model
         for combo in param_combinations:
             # Create parameter dict for this combination
             param_dict = dict(zip(param_names, combo)) if combo else {}
-            
+
             # Create model-specific config
-            model_config = create_model_specific_config(model_type, param_dict, vocab_size)
-            
+            model_config = create_model_specific_config(
+                model_type, param_dict, vocab_size)
+
             # Create base config
-            config = create_base_config(basic_settings, model_type, model_config)
-            
+            config = create_base_config(
+                basic_settings, model_type, model_config)
+
             # Add experiment name
             config['experiment_name'] = f"{model_type.lower()}_run_{config_id:03d}"
-            
+
             # Update trainer config if needed
             if 'learning_rate' in param_dict:
                 config['model']['config']['learning_rate'] = param_dict['learning_rate']
-            
+
             configs.append(config)
             config_id += 1
-    
+
     return configs
 
 
-def create_model_specific_config(model_type: str, param_dict: Dict, vocab_size : int) -> Dict:
+def create_model_specific_config(model_type: str, param_dict: Dict, vocab_size: int) -> Dict:
     """Create model-specific configuration from parameter dictionary"""
-    
+
     if model_type == "CBR_RNN":
         config = {
             'ntoken': vocab_size,
@@ -865,15 +894,15 @@ def create_model_specific_config(model_type: str, param_dict: Dict, vocab_size :
             'temperature': 1.0,
             'gumbel_softmax': param_dict.get('gumbel_softmax', False),
         }
-        
+
         # Add temperature scheduler params if using Gumbel softmax
         if config['gumbel_softmax']:
             config['temp_decay_rate'] = 0.95
             config['temp_final'] = param_dict.get('temp_final', 0.1)
-            
+
     elif model_type == "Transformer":
         config = {
-            'vocab_size':vocab_size,
+            'vocab_size': vocab_size,
             'd_model': param_dict.get('hidden_dim', 384),
             # 'ninp': param_dict.get('embedding_dim', 384),  # For compatibility
             'n_heads': 8,
@@ -884,64 +913,68 @@ def create_model_specific_config(model_type: str, param_dict: Dict, vocab_size :
             'temperature': 1.0,
             'gumbel_softmax': param_dict.get('gumbel_softmax', False),
         }
-        
+
     elif model_type == "LSTM":
         config = {
             'vocab_size': vocab_size,
             'embedding_dim': param_dict.get('embedding_dim', 256),
             'hidden_dim': param_dict.get('hidden_dim', 512),
-            'num_layers':2,
-            'dropout':0.1,
+            'num_layers': 2,
+            'dropout': 0.1,
         }
-    
+
     return config
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Interactive config generator for language model training')
-    parser.add_argument('--output-dir', default='configs', help='Output directory for configs')
-    parser.add_argument('--single-model', choices=['CBR_RNN', 'Transformer', 'LSTM'], 
-                       help='Generate configs for single model type only')
-    
+    parser = argparse.ArgumentParser(
+        description='Interactive config generator for language model training')
+    parser.add_argument('--output-dir', default='configs',
+                        help='Output directory for configs')
+    parser.add_argument('--single-model', choices=['CBR_RNN', 'Transformer', 'LSTM'],
+                        help='Generate configs for single model type only')
+
     args = parser.parse_args()
-    
+
     print("="*60)
     print("LANGUAGE MODEL TRAINING - CONFIG GENERATOR")
     print("="*60)
-    
+
     if args.single_model:
         # Original single-model workflow
         model_type = args.single_model
         print(f"\nConfiguring {model_type} model...")
-        
+
         basic_settings = configure_basic_settings()
         model_config = configure_model_params(model_type)
         grid_params = configure_grid_search()
-        base_config = create_base_config(basic_settings, model_type, model_config)
+        base_config = create_base_config(
+            basic_settings, model_type, model_config)
         all_configs = generate_config_combinations(base_config, grid_params)
     else:
         # Cross-model workflow
         print("\nConfiguring cross-model grid search...")
-        
+
         basic_settings = configure_basic_settings()
         grid_params = configure_cross_model_grid_search()
         all_configs = generate_cross_model_configs(basic_settings, grid_params)
-    
+
     print(f"\nGenerated {len(all_configs)} configuration(s)")
-    
+
     # Print summary of what will be tested
     model_counts = {}
     for config in all_configs:
         model_type = config['model']['type']
         model_counts[model_type] = model_counts.get(model_type, 0) + 1
-    
+
     print("\nExperiment summary:")
     for model_type, count in model_counts.items():
         print(f"  {model_type}: {count} experiments")
-    
+
     # Save configs and create job script
-    config_files, job_script = save_configs_and_create_job_script(all_configs, args.output_dir)
-    
+    config_files, job_script = save_configs_and_create_job_script(
+        all_configs, args.output_dir)
+
     print("\nConfiguration generation complete!")
     print(f"Configs saved in: {args.output_dir}/")
     print(f"Job script: {job_script}")
