@@ -986,6 +986,25 @@ class LSTM(pl.LightningModule):
         self.log('val_perplexity', perplexity, prog_bar=True)
         return loss
 
+    def test_step(self, batch, batch_idx):
+        input_ids, targets = batch
+        logits, _ = self(input_ids)
+
+        # shift_logits = logits[..., :-1, :].contiguous()
+        # shift_targets = targets[..., 1:].contiguous()
+
+        loss = F.cross_entropy(
+            logits.reshape(-1, logits.size(-1)),
+            targets.reshape(-1),
+            ignore_index=-100
+        )
+
+        perplexity = torch.exp(loss)
+
+        self.log('test_loss', loss, prog_bar=True)
+        self.log('test_perplexity', perplexity, prog_bar=True)
+        return loss
+
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(), lr=self.hparams.lr, weight_decay=0.01)
