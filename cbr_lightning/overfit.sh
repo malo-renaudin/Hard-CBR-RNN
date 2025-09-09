@@ -21,7 +21,7 @@ module load pytorch-gpu/py3/2.0.1
 
 
 # Move to your repo directory
-cd /lustre/fswork/projects/rech/ywa/uds37kc/Hard-CBR-RNN
+cd /lustre/fswork/projects/rech/ywa/uds37kc/Hard-CBR-RNN/cbr_lightning
 
 # Make logs directory if not exists
 mkdir -p logs

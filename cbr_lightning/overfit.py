@@ -2,7 +2,7 @@ import torch
 from tqdm import trange
 
 # Import model factory and datamodule directly
-from cbr_lightning.train2 import UniversalDataModule, ModelFactory
+from train2 import UniversalDataModule, ModelFactory
 
 
 def get_one_batch(data_module):
