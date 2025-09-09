@@ -862,7 +862,7 @@ class Transformer(pl.LightningModule):
 ##########################################################################################################################
 
 class LSTM(pl.LightningModule):
-    def __init__(self, vocab_size, embedding_dim=256, hidden_dim=512,
+    def __init__(self, vocab_size, learning_rate, embedding_dim=256, hidden_dim=512,
                  num_layers=2, dropout=0.2):
         super().__init__()
         self.save_hyperparameters()
@@ -1007,7 +1007,7 @@ class LSTM(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
-            self.parameters(), lr=self.hparams.lr, weight_decay=0.01)
+            self.parameters(), lr=self.hparams.learning_rate, weight_decay=0.01)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=1000)
         return {
