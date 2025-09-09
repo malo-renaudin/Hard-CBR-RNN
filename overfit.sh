@@ -19,15 +19,13 @@
 module purge
 module load pytorch-gpu/py3/2.0.1
 
-# Activate your environment (adapt to your setup)
-source /path/to/your/env/bin/activate
 
 # Move to your repo directory
-cd /path/to/Hard-CBR-RNN
+cd /lustre/fswork/projects/rech/ywa/uds37kc/Hard-CBR-RNN
 
 # Make logs directory if not exists
 mkdir -p logs
 
 echo "Running overfit_one_batch_all_models.py on Jean Zay"
 
-python cbr_lightning/overfit_one_batch_all_models.py
+python overfit_one_batch_all_models.py
