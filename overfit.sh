@@ -28,4 +28,4 @@ mkdir -p logs
 
 echo "Running overfit_one_batch_all_models.py on Jean Zay"
 
-python overfit_one_batch_all_models.py
+python overfit.py
