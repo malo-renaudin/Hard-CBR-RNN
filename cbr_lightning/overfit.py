@@ -8,10 +8,18 @@ from train2 import UniversalDataModule, ModelFactory
 def get_one_batch(data_module):
     dl = data_module.train_dataloader()
     batch = next(iter(dl))
-    for k, v in batch.items():
-        if isinstance(v, torch.Tensor):
-            batch[k] = v.cuda() if torch.cuda.is_available() else v
-    return batch
+    if isinstance(batch, dict):  # Original code
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                batch[k] = v.cuda() if torch.cuda.is_available() else v
+        return batch
+    elif isinstance(batch, tuple) and len(batch) == 2:  # Handle tuple case
+        inputs, targets = batch
+        inputs = inputs.cuda() if torch.cuda.is_available() else inputs
+        targets = targets.cuda() if torch.cuda.is_available() else targets
+        return {'input_ids': inputs, 'target_ids': targets}
+    else:
+        raise ValueError(f"Unexpected batch type: {type(batch)}")
 
 
 def run_overfit_all_models(steps=500):
