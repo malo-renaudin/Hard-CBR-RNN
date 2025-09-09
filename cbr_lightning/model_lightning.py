@@ -584,6 +584,142 @@ class Transformer(pl.LightningModule):
         mask = mask.masked_fill(mask == 1, float('-inf'))
         return mask
 
+    # ----------------------
+    # Training metrics computation
+    # ----------------------
+    def compute_vocabulary_metrics(self, observation):
+        """Compute vocabulary-related metrics"""
+        metrics = {}
+
+        # Assuming UNK token has ID 0 (adjust based on your tokenizer)
+        unk_token_id = 32  # Change this to your actual UNK token ID
+
+        # Count UNK tokens
+        total_tokens = observation.numel()
+        unk_count = (observation == unk_token_id).sum().item()
+        unk_percentage = (unk_count / total_tokens) * \
+            100 if total_tokens > 0 else 0
+
+        # Vocabulary coverage
+        unique_tokens = torch.unique(observation).numel()
+
+        metrics['unk_percentage'] = unk_percentage
+        metrics['unique_tokens_in_batch'] = unique_tokens
+        metrics['total_tokens_in_batch'] = total_tokens
+
+        # Token distribution entropy
+        token_counts = torch.bincount(observation.flatten())
+        token_probs = token_counts.float() / token_counts.sum()
+        token_probs = token_probs[token_probs > 0]  # Remove zeros
+        token_entropy = -(token_probs * torch.log(token_probs)).sum().item()
+        metrics['token_entropy'] = token_entropy
+
+        return metrics
+
+    def compute_gradient_metrics(self):
+        """Compute gradient-related metrics"""
+        total_norm = 0.0
+        param_count = 0
+        grad_count = 0
+        layer_grad_norms = {}
+
+        for name, param in self.named_parameters():
+            if param.grad is not None:
+                param_norm = param.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+                grad_count += param.numel()
+
+                # Layer-wise gradient norms
+                layer_name = name.split('.')[0]
+                if layer_name not in layer_grad_norms:
+                    layer_grad_norms[layer_name] = 0.0
+                layer_grad_norms[layer_name] += param_norm.item() ** 2
+
+            param_count += param.numel()
+
+        total_grad_norm = total_norm ** 0.5
+
+        # Compute layer-wise norms
+        for layer_name in layer_grad_norms:
+            layer_grad_norms[layer_name] = layer_grad_norms[layer_name] ** 0.5
+
+        return {
+            'grad_norm': total_grad_norm,
+            'grad_count': grad_count,
+            'param_count': param_count,
+            'layer_grad_norms': layer_grad_norms
+        }
+
+    def compute_weight_metrics(self):
+        """Compute weight-related metrics"""
+        total_weight_norm = 0.0
+        layer_weight_norms = {}
+
+        for name, param in self.named_parameters():
+            param_norm = param.data.norm(2)
+            total_weight_norm += param_norm.item() ** 2
+
+            # Layer-wise weight norms
+            layer_name = name.split('.')[0]
+            if layer_name not in layer_weight_norms:
+                layer_weight_norms[layer_name] = 0.0
+            layer_weight_norms[layer_name] += param_norm.item() ** 2
+
+        total_weight_norm = total_weight_norm ** 0.5
+
+        # Compute layer-wise norms
+        for layer_name in layer_weight_norms:
+            layer_weight_norms[layer_name] = layer_weight_norms[layer_name] ** 0.5
+
+        return {
+            'weight_norm': total_weight_norm,
+            'layer_weight_norms': layer_weight_norms
+        }
+
+    def compute_activation_metrics(self, hidden, key_cache, value_cache, attn_out):
+        """Compute activation statistics"""
+        metrics = {}
+
+        # Hidden state statistics
+        if hidden is not None:
+            metrics['hidden_mean'] = hidden.mean().item()
+            metrics['hidden_std'] = hidden.std().item()
+            metrics['hidden_sparsity'] = (
+                hidden.abs() < 1e-6).float().mean().item()
+
+        # Attention output statistics
+        if attn_out is not None:
+            metrics['attn_mean'] = attn_out.mean().item()
+            metrics['attn_std'] = attn_out.std().item()
+            metrics['attn_sparsity'] = (
+                attn_out.abs() < 1e-6).float().mean().item()
+
+        return metrics
+
+    def compute_learning_dynamics(self, loss):
+        """Compute learning rate and update ratios"""
+        current_lr = self.trainer.optimizers[0].param_groups[0]['lr']
+
+        # Compute parameter update magnitudes vs parameter magnitudes
+        update_ratios = {}
+        if hasattr(self, '_prev_params'):
+            for name, param in self.named_parameters():
+                if name in self._prev_params:
+                    update = param.data - self._prev_params[name]
+                    update_norm = update.norm(2)
+                    param_norm = param.data.norm(2)
+                    if param_norm > 1e-8:
+                        update_ratios[name] = (update_norm / param_norm).item()
+
+        # Store current params for next iteration
+        self._prev_params = {name: param.data.clone()
+                             for name, param in self.named_parameters()}
+
+        return {
+            'learning_rate': current_lr,
+            'update_ratios': update_ratios
+        }
+
     def forward(self, input_ids, temperature, gumbel_softmax):
         temperature = self.temperature
         gumbel_softmax = self.gumbel_softmax
@@ -607,6 +743,48 @@ class Transformer(pl.LightningModule):
         # Final layer norm and projection
         x = self.ln_f(x)
         logits = self.head(x)
+
+    # Gradient metrics (computed after backward pass)
+        if hasattr(self, '_log_gradients') and self._log_gradients:
+            grad_metrics = self.compute_gradient_metrics()
+            self.log("train_grad_norm",
+                     grad_metrics['grad_norm'], on_step=True, on_epoch=False)
+
+            # Log some key layer gradient norms
+            for layer_name, grad_norm in grad_metrics['layer_grad_norms'].items():
+                if layer_name in ['encoder', 'decoder', 'multihead_attn']:
+                    self.log(
+                        f"train_grad_norm_{layer_name}", grad_norm, on_step=True, on_epoch=False)
+
+        # Weight metrics
+        weight_metrics = self.compute_weight_metrics()
+        self.log("train_weight_norm",
+                 weight_metrics['weight_norm'], on_step=True, on_epoch=False)
+
+        # Activation metrics
+        if hasattr(self, '_last_hidden'):
+            activation_metrics = self.compute_activation_metrics(
+                self._last_hidden, self._last_key_cache, self._last_value_cache, self._last_attn_out
+            )
+            for metric_name, value in activation_metrics.items():
+                self.log(f"train_{metric_name}", value,
+                         on_step=True, on_epoch=False)
+
+        # Learning dynamics
+        learning_metrics = self.compute_learning_dynamics(loss)
+        self.log("train_learning_rate",
+                 learning_metrics['learning_rate'], on_step=True, on_epoch=False)
+        self.log("train_temperature", self.temperature,
+                 on_step=True, on_epoch=False)
+
+        # Memory usage (if you want to track it)
+        if torch.cuda.is_available():
+            memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+            memory_reserved = torch.cuda.memory_reserved() / 1024**3    # GB
+            self.log("train_gpu_memory_allocated",
+                     memory_allocated, on_step=True, on_epoch=False)
+            self.log("train_gpu_memory_reserved", memory_reserved,
+                     on_step=True, on_epoch=False)
 
         return logits
 
