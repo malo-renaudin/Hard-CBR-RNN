@@ -744,7 +744,28 @@ class Transformer(pl.LightningModule):
         x = self.ln_f(x)
         logits = self.head(x)
 
-    # Gradient metrics (computed after backward pass)
+        return logits
+
+    def on_train_epoch_start(self):
+        """Update temperature at the start of each training epoch"""
+        self.temp_scheduler.step()
+        self.temperature = self.temp_scheduler.get_temperature()
+
+    def training_step(self, batch, batch_idx):
+        input_ids, targets = batch
+        logits = self(input_ids, self.temperature, self.gumbel_softmax)
+
+        # Shift logits and targets for next token prediction
+        # shift_logits = logits[..., :-1, :].contiguous()
+        # shift_targets = targets[..., 1:].contiguous()
+
+        # Calculate loss
+        loss = F.cross_entropy(
+            logits.reshape(-1, logits.size(-1)),
+            targets.reshape(-1),
+            ignore_index=-100
+        )
+        # Gradient metrics (computed after backward pass)
         if hasattr(self, '_log_gradients') and self._log_gradients:
             grad_metrics = self.compute_gradient_metrics()
             self.log("train_grad_norm",
@@ -785,28 +806,6 @@ class Transformer(pl.LightningModule):
                      memory_allocated, on_step=True, on_epoch=False)
             self.log("train_gpu_memory_reserved", memory_reserved,
                      on_step=True, on_epoch=False)
-
-        return logits
-
-    def on_train_epoch_start(self):
-        """Update temperature at the start of each training epoch"""
-        self.temp_scheduler.step()
-        self.temperature = self.temp_scheduler.get_temperature()
-
-    def training_step(self, batch, batch_idx):
-        input_ids, targets = batch
-        logits = self(input_ids, self.temperature, self.gumbel_softmax)
-
-        # Shift logits and targets for next token prediction
-        # shift_logits = logits[..., :-1, :].contiguous()
-        # shift_targets = targets[..., 1:].contiguous()
-
-        # Calculate loss
-        loss = F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
-            targets.reshape(-1),
-            ignore_index=-100
-        )
 
         self.log('train_loss', loss, prog_bar=True)
         return loss
