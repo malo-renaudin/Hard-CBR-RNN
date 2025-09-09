@@ -725,6 +725,7 @@ class Transformer(pl.LightningModule):
         gumbel_softmax = self.gumbel_softmax
         seq_len, batch_size = input_ids.size()
         input_ids = input_ids.transpose(0, 1)
+        print('input_ids', input_ids.shape)
         # Token embeddings + positional encoding
         x = self.token_embedding(input_ids) * math.sqrt(self.d_model)
         # x = x.transpose(0, 1)  # (seq_len, batch_size, d_model)
