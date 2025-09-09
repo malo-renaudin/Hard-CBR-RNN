@@ -21,8 +21,8 @@ def run_overfit_all_models(steps=500):
         'tokenizer_path': './tokenizer.pkl',
         'batch_size': 8,          # Small batch for fast overfit
         'num_workers': 0,
-        'max_length': 64,         # Short sequence for debugging
-        'vocab_size': 50000       # Will be auto-detected if possible
+        'max_length': 128         # Short sequence for debugging
+        # 'vocab_size': 50000       # Will be auto-detected if possible
     }
     # Load data
     data_module = UniversalDataModule(**data_config)
