@@ -39,8 +39,18 @@ def run_overfit_all_models(steps=500):
     print("Sample batch keys:", batch.keys())
 
     # Prepare input/target
-    input_ids = batch.get('input_ids') or batch.get('inputs')
-    target_ids = batch.get('target_ids') or batch.get('targets')
+    if 'input_ids' in batch:
+        input_ids = batch['input_ids']
+    elif 'inputs' in batch:
+        input_ids = batch['inputs']
+    else:
+        raise KeyError("Batch does not contain 'input_ids' or 'inputs'")
+    if 'target_ids' in batch:
+        target_ids = batch['target_ids']
+    elif 'targets' in batch:
+        target_ids = batch['targets']
+    else:
+        raise KeyError("Batch does not contain 'target_ids' or 'targets'")
     if target_ids.ndim > 1:
         target_ids = target_ids.view(-1)
 
