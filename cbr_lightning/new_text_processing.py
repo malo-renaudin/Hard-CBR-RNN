@@ -36,13 +36,13 @@ class WikiTextTokenizer:
         This matches the original WikiText preprocessing
         """
         # Handle common contractions and punctuation
-        text = re.sub(r"'s", " 's", text)
-        text = re.sub(r"'t", " 't", text)
-        text = re.sub(r"'re", " 're", text)
-        text = re.sub(r"'ve", " 've", text)
-        text = re.sub(r"'ll", " 'll", text)
-        text = re.sub(r"'d", " 'd", text)
-        text = re.sub(r"'m", " 'm", text)
+        # text = re.sub(r"'s", " 's", text)
+        # text = re.sub(r"'t", " 't", text)
+        # text = re.sub(r"'re", " 're", text)
+        # text = re.sub(r"'ve", " 've", text)
+        # text = re.sub(r"'ll", " 'll", text)
+        # text = re.sub(r"'d", " 'd", text)
+        # text = re.sub(r"'m", " 'm", text)
 
         # Split on punctuation but keep it
         text = re.sub(r"([.!?,:;])", r" \1 ", text)
@@ -309,7 +309,7 @@ def process_split_memory_efficient(dataset_split, tokenizer: WikiTextTokenizer,
     # Create dataset
     dataset_dict = {
         'input_ids': all_sequences_input,
-        'labels': all_sequences_target,
+        'target_ids': all_sequences_target,
         'length': [sequence_length] * len(all_sequences_input)
     }
 
