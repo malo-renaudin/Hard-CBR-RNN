@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
-from datasets import load_dataset
+import datasets
 from pathlib import Path
 from collections import Counter
 
@@ -133,12 +133,13 @@ def main():
     pl.seed_everything(42)
 
     data_dir = "cbr_lightning/wikitext-103-raw"
-    train_dataset = load_dataset(data_dir, split="train")
-    val_dataset = load_dataset(data_dir, split="validation")
-    test_dataset = load_dataset(data_dir, split="test")
+    raw = datasets.load_from_disk(data_dir)
+    train_dataset = raw['train']
+    val_dataset = raw['validation']
+    test_dataset = raw['test']
 
     # Build tokenizer on train + val + test
-    all_texts = train_dataset["text"] + val_dataset["text"] + test_dataset["text"]
+    all_texts = train_dataset['text']+ val_dataset['text']+ test_dataset['text']
     tokenizer = WordTokenizer(all_texts, vocab_size=50000)
 
     # Datasets + Dataloaders
