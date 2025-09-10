@@ -51,26 +51,8 @@ class WikiTextDataset(Dataset):
 
 
 # ----------------------------
-# 3️⃣ LSTM Model
+# 3️⃣ Transformer Model
 # ----------------------------
-class TemperatureScheduler:
-    """Simple exponential decay temperature scheduler"""
-
-    def __init__(self, initial_temp=1.0, decay_rate=0.95, final_temp=0.1):
-        self.initial_temp = initial_temp
-        self.decay_rate = decay_rate
-        self.final_temp = final_temp
-        self.current_epoch = 0
-
-    def step(self):
-        """Update the current epoch"""
-        self.current_epoch += 1
-
-    def get_temperature(self):
-        """Get current temperature using exponential decay"""
-        temp = self.initial_temp * (self.decay_rate ** self.current_epoch)
-        return max(temp, self.final_temp)
-
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -117,9 +99,7 @@ class TransformerBlock(nn.Module):
 
 
 
-# ----------------------------
-# 4️⃣ Lightning Module
-# ----------------------------
+
 # ----------------------------
 # 4️⃣ Lightning Module for Transformer
 # ----------------------------
