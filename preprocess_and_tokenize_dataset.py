@@ -51,5 +51,5 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         out_path=out_path,
         sequence_length=128,
-        stride=32
+        stride=64
     )

@@ -3,3 +3,8 @@ cbr_lightning/wikitext-103-tokenized/
 tokenizer.pkl
 cbr_lightning/__pycache__
 SPR_dataset/
+*.txt
+*.pyc
+*.json
+*.arrow
+*.pkl

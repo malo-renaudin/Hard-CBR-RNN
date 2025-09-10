@@ -138,12 +138,13 @@ def run_model_block(name, model, x, y):
 
     if name == "CBR_RNN":
         # expects (S,B)
-        x_input = x.transpose(0,1)
+        # x = x.transpose(0,1)
         # Initialize cache properly - this is crucial for CBR_RNN
-        cache = model.init_cache(x_input)
-        logits, _ = model(x_input, initial_cache=cache)
+        cache = model.init_cache(x)
+        logits, _ = model(x, initial_cache=cache)
         shape = tuple(logits.shape)  # (S,B,V)
         targets = y.transpose(0,1)  # (S,B)
+        
     elif name == "Transformer":
         # expects (B,S) in your current code, returns (S,B,V)
         logits = model(x)
@@ -228,8 +229,8 @@ def micro_overfit(name, model, x, y, steps=10, lr=1e-2):
     # For CBR_RNN, we need to maintain a persistent cache across steps
     if name == "CBR_RNN":
         # Initialize cache once
-        x_input = x.transpose(0, 1)
-        persistent_cache = model.init_cache(x_input)
+        # x_input = x.transpose(0, 1)
+        persistent_cache = model.init_cache(x)
         print(f"  CBR_RNN: initialized cache shapes: {[tuple(c.shape) for c in persistent_cache]}")
     
     for s in range(steps):
@@ -238,13 +239,16 @@ def micro_overfit(name, model, x, y, steps=10, lr=1e-2):
         if name == "CBR_RNN":
             # Use the persistent cache but detach it to prevent gradient accumulation issues
             # while still allowing gradients to flow through the current step
-            cache_input = tuple(c.detach().requires_grad_(True) for c in persistent_cache)
-            logits, new_cache = model(x_input, initial_cache=cache_input)
+            # cache_input = tuple(c.detach().requires_grad_(True) for c in persistent_cache)
+            # logits, new_cache = model(x, initial_cache=cache_input)
+
+            # loss, _ = logits_targets_loss(logits, y.transpose(0,1))
+            cache = model.init_cache(x)
+            logits, _ = model(x, initial_cache=cache)
             loss, _ = logits_targets_loss(logits, y.transpose(0,1))
-            
             # Update persistent cache with new values (detached)
-            if new_cache is not None:
-                persistent_cache = tuple(c.detach() for c in new_cache)
+            # if new_cache is not None:
+            #     persistent_cache = tuple(c.detach() for c in new_cache)
                 
         elif name == "Transformer":
             logits = model(x)
@@ -256,7 +260,7 @@ def micro_overfit(name, model, x, y, steps=10, lr=1e-2):
         loss.backward()
         
         # Gradient clipping to prevent exploding gradients
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm= 0.5)
         
         opt.step()
         losses.append(loss.item())
@@ -337,11 +341,11 @@ if __name__ == "__main__":
             print("CBR_RNN OVERFITTING ANALYSIS REPORT")
             print("="*80)
             
-            cbr_test = CBR_RNN(ntoken=V, ninp=256, nhid=512, nheads=4, seq_len=S, compressed_dim=32).to(DEVICE).train()
+            cbr_test = CBR_RNN(ntoken=V, ninp=256, nhid=512, nheads=4, seq_len=S, compressed_dim=1).to(DEVICE).train()
             
             print("Testing different learning rates:")
             for lr in [1e-1, 3e-2, 1e-2, 3e-3, 1e-3]:
-                cbr_temp = CBR_RNN(ntoken=V, ninp=256, nhid=512, nheads=4, seq_len=S, compressed_dim=32).to(DEVICE).train()
+                cbr_temp = CBR_RNN(ntoken=V, ninp=256, nhid=512, nheads=4, seq_len=S, compressed_dim=1).to(DEVICE).train()
                 losses = micro_overfit("CBR_RNN", cbr_temp, x, y, steps=15, lr=lr)
                 improvement = losses[0] - losses[-1] if len(losses) > 1 else 0
                 print(f"lr={lr}: improvement = {improvement:.6f}")
