@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
+from datasets import load_dataset
 from pathlib import Path
 from collections import Counter
 
@@ -132,20 +133,21 @@ def main():
     pl.seed_everything(42)
 
     data_dir = "wikitext-103-raw"
-    train_file = Path(data_dir) / "train"
-    val_file = Path(data_dir) / "validation"
-    test_file = Path(data_dir) / "test"
+    train_dataset = load_dataset(data_dir, split="train")
+    val_dataset = load_dataset(data_dir, split="validation")
+    test_dataset = load_dataset(data_dir, split="test")
 
     # Build tokenizer on train + val + test
-    tokenizer = WordTokenizer([train_file, val_file, test_file], vocab_size=50000)
+    all_texts = train_dataset["text"] + val_dataset["text"] + test_dataset["text"]
+    tokenizer = WordTokenizer(all_texts, vocab_size=50000)
 
     # Datasets + Dataloaders
     seq_len = 35
     batch_size = 20
-    train_dataset = WikiTextDataset(train_file, tokenizer, seq_len)
-    val_dataset = WikiTextDataset(val_file, tokenizer, seq_len)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size)
+    train_ds = WikiTextDataset(train_dataset, tokenizer, seq_len)
+    val_ds = WikiTextDataset(val_dataset, tokenizer, seq_len)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size)
 
     # Model + Trainer
     model = LanguageModel(tokenizer.vocab_size)
