@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 # --- import your code ---
 from train2 import UniversalDataModule
 from model_lightning import CBR_RNN, Transformer, LSTM
-from tokenizer import WordTokenizer  # adjust if tokenizer is elsewhere
+from word_tok import WordTokenizer  # adjust if tokenizer is elsewhere
 
 
 # ==== CONFIG ====
