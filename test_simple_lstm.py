@@ -139,7 +139,7 @@ def main():
     test_dataset = raw['test']
 
     # Build tokenizer on train + val + test
-    all_texts = train_dataset['text']+ val_dataset['text']+ test_dataset['text']
+    all_texts = list(train_dataset['text'])+ list(val_dataset['text'])+ list(test_dataset['text'])
     tokenizer = WordTokenizer(all_texts, vocab_size=50000)
 
     # Datasets + Dataloaders
