@@ -132,6 +132,7 @@ class LanguageModel(pl.LightningModule):
 # ----------------------------
 def main():
     pl.seed_everything(42)
+    torch.set_float32_matmul_precision('medium') 
 
     data_dir = "cbr_lightning/wikitext-103-raw"
     raw = datasets.load_from_disk(data_dir)
@@ -145,11 +146,11 @@ def main():
 
     # Datasets + Dataloaders
     seq_len = 35
-    batch_size = 20
+    batch_size = 256
     train_ds = WikiTextDataset(train_dataset, tokenizer, seq_len)
     val_ds = WikiTextDataset(val_dataset, tokenizer, seq_len)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=7)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=7)
 
     # Model + Trainer
     model = LanguageModel(tokenizer.vocab_size)
