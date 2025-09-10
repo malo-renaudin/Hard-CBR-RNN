@@ -52,7 +52,7 @@ def run_overfit_all_models(steps=500):
     else:
         raise KeyError("Batch does not contain 'target_ids' or 'targets'")
     if target_ids.ndim > 1:
-        target_ids = target_ids.view(-1)
+        target_ids = target_ids.reshape(-1)
 
     # Model types and their minimal configs
     model_types = {
@@ -92,7 +92,7 @@ def run_overfit_all_models(steps=500):
             else:
                 logits = model(input_ids)
             if logits.ndim == 3:
-                logits = logits.view(-1, logits.size(-1))
+                logits = logits.reshape(-1, logits.size(-1))
             loss = criterion(logits, target_ids)
             loss.backward()
             optimizer.step()
