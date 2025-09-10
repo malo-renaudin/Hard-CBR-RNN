@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=test_simple_lstm
-#SBATCH --output=logs/test_simple_lstm_%j.log
-#SBATCH --error=logs/test_simple_lstm_%j.err
+#SBATCH --job-name=test_simple_transformer
+#SBATCH --output=logs/test_simple_transformer_%j.log
+#SBATCH --error=logs/test_simple_transformer_%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
@@ -27,4 +27,4 @@ cd /lustre/fswork/projects/rech/ywa/uds37kc/Hard-CBR-RNN
 mkdir -p logs
 
 
-python test_simple_lstm.py
+python test_simple_transformer.py
