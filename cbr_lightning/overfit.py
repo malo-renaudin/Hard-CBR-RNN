@@ -89,8 +89,8 @@ def run_overfit_all_models(steps=500):
             optimizer.zero_grad()
             if model_type == 'CBR_RNN' or model_type == 'LSTM':
                 logits, _ = model(input_ids)
-            else:
-                logits = model(input_ids)
+            elif model == 'Transformer':
+                logits = model(input_ids, temperature=1, gumbel_softmax=False)
             if logits.ndim == 3:
                 logits = logits.reshape(-1, logits.size(-1))
             loss = criterion(logits, target_ids)
