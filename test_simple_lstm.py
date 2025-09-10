@@ -11,10 +11,10 @@ from collections import Counter
 # 1️⃣ Tokenizer
 # ----------------------------
 class WordTokenizer:
-    def __init__(self, files, vocab_size=50000):
+    def __init__(self, list_of_texts, vocab_size=50000):
         tokens = []
-        for file in files:
-            text = Path(file).read_text(encoding="utf-8")
+        tokens = []
+        for text in list_of_texts:
             tokens.extend(text.split())
         counter = Counter(tokens)
         most_common = counter.most_common(vocab_size - 2)  # reserve 0: <pad>, 1: <unk>
@@ -33,9 +33,10 @@ class WordTokenizer:
 # 2️⃣ Dataset
 # ----------------------------
 class WikiTextDataset(Dataset):
-    def __init__(self, file_path, tokenizer, seq_len=35):
+    def __init__(self, dataset, tokenizer, seq_len=35):
         self.seq_len = seq_len
-        text = Path(file_path).read_text(encoding="utf-8")
+        text = " ".join(list(dataset["text"]))
+        # Encode text to integer token IDs
         self.data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
 
     def __len__(self):
