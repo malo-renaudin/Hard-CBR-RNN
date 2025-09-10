@@ -87,7 +87,10 @@ def run_overfit_all_models(steps=500):
         # Forward pass: adjust for model signature
         for step in trange(steps):
             optimizer.zero_grad()
-            logits = model(input_ids)
+            if model_type == 'CBR_RNN' or model_type == 'LSTM':
+                logits, _ = model(input_ids)
+            else:
+                logits = model(input_ids)
             if logits.ndim == 3:
                 logits = logits.view(-1, logits.size(-1))
             loss = criterion(logits, target_ids)
