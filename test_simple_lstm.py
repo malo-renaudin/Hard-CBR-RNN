@@ -132,7 +132,7 @@ class LanguageModel(pl.LightningModule):
 def main():
     pl.seed_everything(42)
 
-    data_dir = "wikitext-103-raw"
+    data_dir = "cbr_lightning/wikitext-103-raw"
     train_dataset = load_dataset(data_dir, split="train")
     val_dataset = load_dataset(data_dir, split="validation")
     test_dataset = load_dataset(data_dir, split="test")
