@@ -57,7 +57,7 @@ def run_overfit_all_models(steps=500):
     # Model types and their minimal configs
     model_types = {
         "CBR_RNN": {
-            'ninp': 32, 'nhid': 64, 'nheads': 2, 'compressed_dim': 8, 'dropout': 0.1,
+            'ninp': 64, 'nhid': 64, 'nheads': 2, 'compressed_dim': 8, 'dropout': 0.1,
             'temperature': 1.0, 'gumbel_softmax': False
         },
         "Transformer": {
