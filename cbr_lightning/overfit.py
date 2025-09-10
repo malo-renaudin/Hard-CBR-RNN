@@ -81,6 +81,9 @@ def run_overfit_all_models(steps=500):
 
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
+        if model_type == "CBR_RNN":
+            input_ids = input_ids.transpose(0, 1)
+
         # Forward pass: adjust for model signature
         for step in trange(steps):
             optimizer.zero_grad()
