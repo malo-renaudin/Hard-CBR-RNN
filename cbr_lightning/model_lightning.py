@@ -873,7 +873,7 @@ class LSTM(pl.LightningModule):
         self.num_layers = num_layers
 
         # Embedding layer
-        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.embedding = nn.Embedding(vocab_size+1, embedding_dim)
 
         # LSTM layer
         self.lstm = nn.LSTM(
@@ -888,7 +888,7 @@ class LSTM(pl.LightningModule):
         self.dropout = nn.Dropout(dropout)
 
         # Output projection layer
-        self.output_projection = nn.Linear(hidden_dim, vocab_size)
+        self.output_projection = nn.Linear(hidden_dim, vocab_size+1)
 
         # Initialize weights
         self.apply(self._init_weights)
