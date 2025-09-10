@@ -26,7 +26,7 @@ def run_overfit_all_models(steps=500):
     # Use default dataset/tokenizer info
     data_config = {
         'dataset_path': './wikitext-103-tokenized',
-        'tokenizer_path': '../tokenizer.pkl',
+        'tokenizer_path': './tokenizer.pkl',
         'batch_size': 8,          # Small batch for fast overfit
         'num_workers': 0,
         'max_length': 128         # Short sequence for debugging
