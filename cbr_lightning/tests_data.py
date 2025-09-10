@@ -23,9 +23,9 @@ def test_dataset_loading():
     dm.setup()
 
     assert dm.vocab_size > 0, "Tokenizer vocab is empty!"
-    assert len(dm.train_dataset) > 0, "Train dataset is empty!"
-    assert len(dm.val_dataset) > 0, "Validation dataset is empty!"
-    assert len(dm.test_dataset) > 0, "Test dataset is empty!"
+    assert len(dm.dataset['train']) > 0, "Train dataset is empty!"
+    assert len(dm.dataset['val']) > 0, "Validation dataset is empty!"
+    assert len(dm.dataset['test']) > 0, "Test dataset is empty!"
     print("✅ Dataset loading works.")
 
 
