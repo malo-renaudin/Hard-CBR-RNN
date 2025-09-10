@@ -945,9 +945,12 @@ class LSTM(pl.LightningModule):
         logits = logits.transpose(0, 1)
         return logits, hidden
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx, hiddens):
         input_ids, targets = batch
-        logits, _ = self(input_ids)
+        if hiddens is None:
+            logits, hiddens = self(input_ids)  # Model returns logits and (h, c)
+        else:
+            logits, hiddens = self(input_ids, hiddens)
 
         # Shift logits and targets for next token prediction
         # shift_logits = logits[..., :-1, :].contiguous()
@@ -965,6 +968,9 @@ class LSTM(pl.LightningModule):
 
         self.log('train_loss', loss, prog_bar=True)
         self.log('train_perplexity', perplexity, prog_bar=True)
+        
+        hiddens = (hiddens[0].detach(), hiddens[1].detach())
+        
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -988,7 +994,7 @@ class LSTM(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         input_ids, targets = batch
-        logits, _ = self(input_ids)
+        logits,_= self(input_ids)
 
         # shift_logits = logits[..., :-1, :].contiguous()
         # shift_targets = targets[..., 1:].contiguous()
