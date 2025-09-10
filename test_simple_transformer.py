@@ -81,121 +81,39 @@ class PositionalEncoding(nn.Module):
                              (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
+        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        return x + self.pe[:x.size(0), :]
+        # x: (batch_size, seq_len, d_model)
+        return x + self.pe[:, :x.size(1), :]
 
 
+# ----------------------------
+# 4️⃣ Transformer Block
+# ----------------------------
 class TransformerBlock(nn.Module):
     def __init__(self, d_model, n_heads, d_ff, dropout=0.1):
         super().__init__()
-        self.attention = MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True)
+        self.attention = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads, batch_first=True)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
 
-        self.feed_forward = nn.Sequential(
+        self.ff = nn.Sequential(
             nn.Linear(d_model, d_ff),
             nn.ReLU(),
             nn.Linear(d_ff, d_model)
         )
-        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, temperature, gumbel_softmax, mask=None):
-        # Self-attention with residual connection
-        attn_out, _ = self.attention(
-            x, x, x,  attn_mask=mask, temperature=temperature, gumbel_softmax=gumbel_softmax, need_weights=False)
+    def forward(self, x, mask=None):
+        # Self-attention
+        attn_out, _ = self.attention(x, x, x, attn_mask=mask)
         x = self.norm1(x + self.dropout(attn_out))
-
-        # Feed-forward with residual connection
-        ff_out = self.feed_forward(x)
+        # Feed-forward
+        ff_out = self.ff(x)
         x = self.norm2(x + self.dropout(ff_out))
         return x
-
-
-class Transformer(pl.LightningModule):
-    def __init__(self, vocab_size, d_model, n_heads, n_layers,
-                 d_ff, max_seq_len, dropout, temperature, gumbel_softmax, learning_rate, temp_decay_rate=0.95, temp_final=0.1):
-        super().__init__()
-        self.save_hyperparameters()
-
-        self.d_model = d_model
-        self.vocab_size = vocab_size
-
-        self.temperature = temperature
-        self.gumbel_softmax = gumbel_softmax
-        self.temp_decay_rate = temp_decay_rate
-        self.temp_final = temp_final
-
-        self.temp_scheduler = TemperatureScheduler(
-            initial_temp=temperature,
-            decay_rate=temp_decay_rate,
-            final_temp=temp_final
-        )
-
-        # Token embeddings
-        self.token_embedding = nn.Embedding(vocab_size+1, d_model)
-        self.pos_encoding = PositionalEncoding(d_model, max_seq_len)
-
-        # Transformer blocks
-        self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(d_model, n_heads, d_ff, dropout)
-            for _ in range(n_layers)
-        ])
-
-        # Output projection
-        self.ln_f = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, vocab_size+1, bias=False)
-
-        self.dropout = nn.Dropout(dropout)
-
-        # Initialize weights
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-    def create_causal_mask(self, seq_len, device):
-        mask = torch.triu(torch.ones(
-            seq_len, seq_len, device=device), diagonal=1)
-        mask = mask.float()                 # ensure float
-        mask = mask.masked_fill(mask == 1, float('-inf'))
-        return mask
-
-
-    def forward(self, input_ids, temperature, gumbel_softmax):
-        temperature = self.temperature
-        gumbel_softmax = self.gumbel_softmax
-        seq_len, batch_size = input_ids.size()
-        input_ids = input_ids.transpose(0, 1)
-        print('input_ids', input_ids.shape)
-        # Token embeddings + positional encoding
-        x = self.token_embedding(input_ids) * math.sqrt(self.d_model)
-        # x = x.transpose(0, 1)  # (seq_len, batch_size, d_model)
-        x = self.pos_encoding(x)
-        # x = x.transpose(0, 1)  # (batch_size, seq_len, d_model)
-        x = self.dropout(x)
-
-        # Create causal mask
-        causal_mask = self.create_causal_mask(seq_len, input_ids.device)
-
-        # Pass through transformer blocks
-        for block in self.transformer_blocks:
-            x = block(x, mask=causal_mask, temperature=temperature,
-                      gumbel_softmax=gumbel_softmax)
-
-        # Final layer norm and projection
-        x = self.ln_f(x)
-        logits = self.head(x)
-
-        return logits
 
 
 
@@ -205,41 +123,59 @@ class Transformer(pl.LightningModule):
 # ----------------------------
 # 4️⃣ Lightning Module for Transformer
 # ----------------------------
-class LanguageModel(pl.LightningModule):
+class TransformerLM(pl.LightningModule):
     def __init__(self, vocab_size, d_model=512, n_heads=8, n_layers=6,
-                 d_ff=2048, max_seq_len=35, dropout=0.1,
-                 temperature=1.0, gumbel_softmax=False, learning_rate=1e-3):
+                 d_ff=2048, max_seq_len=35, dropout=0.1, learning_rate=1e-3):
         super().__init__()
         self.save_hyperparameters()
-        self.model = Transformer(
-            vocab_size=vocab_size,
-            d_model=d_model,
-            n_heads=n_heads,
-            n_layers=n_layers,
-            d_ff=d_ff,
-            max_seq_len=max_seq_len,
-            dropout=dropout,
-            temperature=temperature,
-            gumbel_softmax=gumbel_softmax,
-            learning_rate=learning_rate
-        )
+
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_encoding = PositionalEncoding(d_model, max_len=max_seq_len)
+        self.blocks = nn.ModuleList([
+            TransformerBlock(d_model, n_heads, d_ff, dropout) for _ in range(n_layers)
+        ])
+        self.ln = nn.LayerNorm(d_model)
+        self.head = nn.Linear(d_model, vocab_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def create_causal_mask(self, seq_len, device):
+        mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
+        return mask  # MultiheadAttention expects bool mask
+
+    def forward(self, x):
+        # x: (batch_size, seq_len)
+        batch_size, seq_len = x.size()
+        mask = self.create_causal_mask(seq_len, x.device)
+
+        x = self.embedding(x) * math.sqrt(self.hparams.d_model)
+        x = self.pos_encoding(x)
+        x = self.dropout(x)
+
+        for block in self.blocks:
+            x = block(x, mask=mask)
+
+        x = self.ln(x)
+        logits = self.head(x)  # (batch_size, seq_len, vocab_size)
+        return logits
+
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        logits = self.model(x, self.hparams.temperature, self.hparams.gumbel_softmax)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-100)
+        logits = self(x)
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
         self.log("train_loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        logits = self.model(x, self.hparams.temperature, self.hparams.gumbel_softmax)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-100)
+        logits = self(x)
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
         self.log("val_loss", loss, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+
 
 
 # ----------------------------
@@ -268,7 +204,7 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=7)
 
     # Model + Trainer
-    model = LanguageModel(tokenizer.vocab_size)
+    model = TransformerLM(tokenizer.vocab_size)
     trainer = pl.Trainer(gradient_clip_val=0.25, max_epochs=20, accelerator="gpu", devices=1)
     trainer.fit(model, train_loader, val_loader)
 
