@@ -892,6 +892,7 @@ class LSTM(pl.LightningModule):
 
         # Initialize weights
         self.apply(self._init_weights)
+        self.hidden_state = None
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -945,12 +946,10 @@ class LSTM(pl.LightningModule):
         logits = logits.transpose(0, 1)
         return logits, hidden
 
-    def training_step(self, batch, batch_idx, hiddens):
+    def training_step(self, batch, batch_idx):
         input_ids, targets = batch
-        if hiddens is None:
-            logits, hiddens = self(input_ids)  # Model returns logits and (h, c)
-        else:
-            logits, hiddens = self(input_ids, hiddens)
+        
+        logits, hiddens = self(input_ids, self.hidden_state)
 
         # Shift logits and targets for next token prediction
         # shift_logits = logits[..., :-1, :].contiguous()
