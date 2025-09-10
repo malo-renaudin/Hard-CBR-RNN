@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=overfit_batch_all_models
-#SBATCH --output=logs/overfit_batch_all_models_%j.log
-#SBATCH --error=logs/overfit_batch_all_models_%j.err
+#SBATCH --job-name=test_data
+#SBATCH --output=logs/test_data_%j.log
+#SBATCH --error=logs/test_data_%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1

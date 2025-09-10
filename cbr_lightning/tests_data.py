@@ -8,8 +8,8 @@ from word_tok import WordTokenizer  # adjust if tokenizer is elsewhere
 
 
 # ==== CONFIG ====
-DATASET_PATH = "wikitext103_preprocessed"  # path where you saved datasets
-TOKENIZER_PATH = "tokenizer.pkl"           # path to saved tokenizer
+DATASET_PATH = "wikitext-103-tokenized"  # path where you saved datasets
+TOKENIZER_PATH = "./tokenizer.pkl"           # path to saved tokenizer
 BATCH_SIZE = 4
 SEQ_LEN = 128
 
