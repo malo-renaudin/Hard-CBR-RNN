@@ -62,18 +62,15 @@ def test_models_forward():
 
     models = {
         "CBR_RNN": CBR_RNN(ntoken, ninp, nhid, nheads, SEQ_LEN,
-                           compressed_dim=32, dropout=0.1,
+                           compressed_dim=1, dropout=0.1,
                            learning_rate=1e-3, criterion="cross_entropy",
                            optimizer_type="adam"),
-        "Transformer": Transformer(ntoken, ninp, nheads, nhid, nlayers,
-                                   max_seq_len=SEQ_LEN,
-                                   dropout=0.1, learning_rate=1e-3,
-                                   criterion="cross_entropy",
-                                   optimizer_type="adam"),
-        "LSTM": LSTM(ntoken, ninp, nhid, nlayers,
-                     dropout=0.1, learning_rate=1e-3,
-                     criterion="cross_entropy",
-                     optimizer_type="adam"),
+        "Transformer": Transformer(vocab_size=ntoken, d_model=64, n_heads=2, n_layers=6,
+                                   d_ff=64, max_seq_len=SEQ_LEN, dropout=0.1, temperature=1, gumbel_softmax='false',
+                                   learning_rate=1e-3, temp_decay_rate=0.95, temp_final=0.1),
+
+        "LSTM": LSTM(vocab_size=ntoken, embedding_dim=ninp, hidden_dim=nhid, num_layers=nlayers,
+                     dropout=0.1, learning_rate=1e-3)
     }
 
     for name, model in models.items():
@@ -93,9 +90,9 @@ def test_loss_computation():
     inputs, targets = next(iter(dm.train_dataloader()))
 
     vocab_size = dm.vocab_size
-    model = LSTM(ntoken=vocab_size, ninp=64, nhid=128, nlayers=2,
+    model = LSTM(ntoken=vocab_size, embedding_dim=64, hidden_dim=128, nlayers=2,
                  dropout=0.1, learning_rate=1e-3,
-                 criterion="cross_entropy", optimizer_type="adam")
+                 optimizer_type="adam")
 
     loss = model.training_step((inputs, targets), 0)
     assert torch.is_tensor(loss), "Loss must be a tensor"
