@@ -104,14 +104,14 @@ class LanguageModel(pl.LightningModule):
         x, y = batch
         logits = self.model(x)
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
-        self.log("train_loss", loss)
+        self.log("train_loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         logits = self.model(x)
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
-        self.log("val_loss", loss)
+        self.log("val_loss", loss, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
@@ -144,8 +144,8 @@ def main():
     tokenizer = WordTokenizer(all_texts, vocab_size=50000)
 
     # Datasets + Dataloaders
-    seq_len = 35
-    batch_size = 256
+    seq_len = 128
+    batch_size = 512
     train_ds = WikiTextDataset(train_dataset, tokenizer, seq_len)
     val_ds = WikiTextDataset(val_dataset, tokenizer, seq_len)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=7)
