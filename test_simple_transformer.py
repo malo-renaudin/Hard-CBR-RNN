@@ -59,104 +59,72 @@ class PositionalEncoding(nn.Module):
         super().__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() *
-                             (-math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
+        pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        # x: (batch_size, seq_len, d_model)
+        # x shape: (batch, seq_len, d_model)
         return x + self.pe[:, :x.size(1), :]
 
-
-# ----------------------------
-# 4️⃣ Transformer Block
-# ----------------------------
-class TransformerBlock(nn.Module):
-    def __init__(self, d_model, n_heads, d_ff, dropout=0.1):
+class TransformerLM(nn.Module):
+    def __init__(self, vocab_size, d_model=512, n_heads=8, n_layers=6, d_ff=2048, max_seq_len=512, dropout=0.1):
         super().__init__()
-        self.attention = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads, batch_first=True)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.token_embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_encoding = PositionalEncoding(d_model, max_seq_len)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=n_heads, dim_feedforward=d_ff, dropout=dropout, batch_first=True)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.ln = nn.LayerNorm(d_model)
+        self.head = nn.Linear(d_model, vocab_size)
 
-        self.ff = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.ReLU(),
-            nn.Linear(d_ff, d_model)
-        )
-
-    def forward(self, x, mask=None):
-        # Self-attention
-        attn_out, _ = self.attention(x, x, x, attn_mask=mask)
-        x = self.norm1(x + self.dropout(attn_out))
-        # Feed-forward
-        ff_out = self.ff(x)
-        x = self.norm2(x + self.dropout(ff_out))
-        return x
-
-
+    def forward(self, x):
+        # x: (batch, seq_len)
+        x = self.token_embedding(x) * math.sqrt(self.token_embedding.embedding_dim)
+        x = self.pos_encoding(x)
+        # Causal mask for language modeling
+        seq_len = x.size(1)
+        mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device) * float('-inf'), diagonal=1)
+        x = self.transformer(x, mask=mask)
+        x = self.ln(x)
+        logits = self.head(x)
+        return logits  # shape: (batch, seq_len, vocab_size)
 
 
 # ----------------------------
 # 4️⃣ Lightning Module for Transformer
 # ----------------------------
-class TransformerLM(pl.LightningModule):
-    def __init__(self, vocab_size, d_model=512, n_heads=8, n_layers=6,
-                 d_ff=2048, max_seq_len=35, dropout=0.1, learning_rate=1e-3):
+class LanguageModel(pl.LightningModule):
+    def __init__(self, vocab_size):
         super().__init__()
-        self.save_hyperparameters()
-
-        self.embedding = nn.Embedding(vocab_size, d_model)
-        self.pos_encoding = PositionalEncoding(d_model, max_len=max_seq_len)
-        self.blocks = nn.ModuleList([
-            TransformerBlock(d_model, n_heads, d_ff, dropout) for _ in range(n_layers)
-        ])
-        self.ln = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, vocab_size)
-        self.dropout = nn.Dropout(dropout)
-
-    def create_causal_mask(self, seq_len, device):
-        mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
-        return mask  # MultiheadAttention expects bool mask
-
-    def forward(self, x):
-        # x: (batch_size, seq_len)
-        batch_size, seq_len = x.size()
-        mask = self.create_causal_mask(seq_len, x.device)
-
-        x = self.embedding(x) * math.sqrt(self.hparams.d_model)
-        x = self.pos_encoding(x)
-        x = self.dropout(x)
-
-        for block in self.blocks:
-            x = block(x, mask=mask)
-
-        x = self.ln(x)
-        logits = self.head(x)  # (batch_size, seq_len, vocab_size)
-        return logits
-
+        self.model = TransformerLM(vocab_size)
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        logits = self(x)
+        logits = self.model(x)
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
-        self.log("train_loss", loss, prog_bar=True)
+        self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        logits = self(x)
+        logits = self.model(x)
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
-        self.log("val_loss", loss, prog_bar=True)
+        self.log("val_loss", loss)
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1.0)  # peak LR
 
+        def lr_lambda(step):
+            warmup_steps = 4000
+            d_model = 512
+            step = max(step, 1)
+            return (d_model ** -0.5) * min(step ** -0.5, step * warmup_steps ** -1.5)
 
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        return [optimizer], [scheduler]
 
 # ----------------------------
 # 5️⃣ Training
@@ -184,7 +152,7 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=7)
 
     # Model + Trainer
-    model = TransformerLM(tokenizer.vocab_size)
+    model = LanguageModel(tokenizer.vocab_size)
     trainer = pl.Trainer(gradient_clip_val=0.25, max_epochs=20, accelerator="gpu", devices=1)
     trainer.fit(model, train_loader, val_loader)
 
