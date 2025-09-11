@@ -226,24 +226,31 @@ class LanguageModel(pl.LightningModule):
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
-            self.parameters(), 
-            lr=2e-4,  # Lower peak LR
-            weight_decay=0.1
+            self.parameters(),
+            lr=2e-4,
+            weight_decay=0.1,
+            eps=1e-6,
+            betas=(0.9, 0.95)
         )
         
         total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = int(0.15 * total_steps)  # Longer warmup
+        warmup_steps = int(0.15 * total_steps)
         
         def lr_lambda(step):
             if step < warmup_steps:
                 return step / warmup_steps
             else:
-                # Cosine decay after warmup
                 progress = (step - warmup_steps) / (total_steps - warmup_steps)
                 return 0.5 * (1 + math.cos(math.pi * progress))
         
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+        
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+            "gradient_clip_val": 1.0,
+            "gradient_clip_algorithm": "norm"
+        }
 
 # ----------------------------
 # 5️⃣ Training
