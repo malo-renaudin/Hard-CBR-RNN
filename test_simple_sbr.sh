@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 #SBATCH --constraint=h100
 #SBATCH --account=ywa@h100
 #SBATCH --hint=nomultithread
