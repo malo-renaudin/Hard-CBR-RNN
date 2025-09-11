@@ -255,11 +255,11 @@ def main():
 
     # Datasets + Dataloaders
     seq_len = 128
-    batch_size = 512
+    batch_size = 256
     train_ds = WikiTextDataset(train_dataset, tokenizer, seq_len)
     val_ds = WikiTextDataset(val_dataset, tokenizer, seq_len)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=7)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=7)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=7, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=7, drop_last=True)
 
     # Model + Trainer
     model = LanguageModel(tokenizer.vocab_size)
