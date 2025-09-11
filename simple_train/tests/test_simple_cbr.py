@@ -270,7 +270,7 @@ def main():
     tokenizer = WordTokenizer(all_texts, vocab_size=50000)
 
     # Datasets + Dataloaders
-    seq_len = 128
+    seq_len = 35
     batch_size = 256
     train_ds = WikiTextDataset(train_dataset, tokenizer, seq_len)
     val_ds = WikiTextDataset(val_dataset, tokenizer, seq_len)
