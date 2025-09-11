@@ -252,12 +252,18 @@ class LanguageModel(pl.LightningModule):
     #         "gradient_clip_algorithm": "norm"
     #     }
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            self.parameters(),
-            lr=1e-3,        # Increase from 2e-4
-            weight_decay=0.01,  # Decrease from 0.1
-            eps=1e-8,       # Standard value
-            betas=(0.9, 0.999)  # Standard Adam betas
+        # optimizer = torch.optim.AdamW(
+        #     self.parameters(),
+        #     lr=1e-3,        # Increase from 2e-4
+        #     weight_decay=0.01,  # Decrease from 0.1
+        #     eps=1e-8,       # Standard value
+        #     betas=(0.9, 0.999)  # Standard Adam betas
+        # )
+        optimizer = torch.optim.SGD(
+        self.parameters(), 
+        lr=1.0, 
+        momentum=0.9, 
+        nesterov=True
         )
         
         return optimizer

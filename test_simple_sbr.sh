@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=test_simple_cbr
+#SBATCH --job-name=test_simple_cbr_SGD
 #SBATCH --output=logs/test_simple_cbr_%j.log
 #SBATCH --error=logs/test_simple_cbr_%j.err
 #SBATCH --ntasks=1
