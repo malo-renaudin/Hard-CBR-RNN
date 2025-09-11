@@ -54,7 +54,7 @@ class WikiTextDataset(Dataset):
 # 3️⃣ Transformer Model
 # ----------------------------
 
-class CBR_RNN(nn.Module):
+class Custom_model(nn.Module):
     def __init__(self, ntoken, ninp=512, nhid=512, nheads=1, seq_len=35, compressed_dim=1, dropout=0.5, learning_rate=1e-3,
                  criterion='cross_entropy', optimizer_type='adam', weight_decay=0.0):
         super().__init__()
@@ -175,9 +175,9 @@ class CBR_RNN(nn.Module):
             key_cache, value_cache, hidden = self.update_cache(
                 key_cache, value_cache, hidden, k_i, v_i, h_i)
         decoded = self.decoder(hidden[-self.seq_len:])#.transpose(0, 1)
-        cache = self.compress_cache(hidden, key_cache, value_cache)
+        # cache = self.compress_cache(hidden, key_cache, value_cache)
 
-        return decoded, cache
+        return decoded
 
   
 
@@ -187,18 +187,18 @@ class CBR_RNN(nn.Module):
 class LanguageModel(pl.LightningModule):
     def __init__(self, vocab_size):
         super().__init__()
-        self.model = CBR_RNN(ntoken=vocab_size)
+        self.model = Custom_model(ntoken=vocab_size)
         self.epoch_cache = None
         
     def _shared_step(self, batch, stage):
         data, targets = batch
-        if self.epoch_cache is None:
-            self.epoch_cache = self.model.init_cache(data)
+        # if self.epoch_cache is None:
+        #     self.epoch_cache = self.model.init_cache(data)
+        initial_cache = self.model.init_cache(data)
+        output= self.model.forward(data, initial_cache=initial_cache)
 
-        output, new_cache = self.model.forward(data, initial_cache=self.epoch_cache)
-
-        if new_cache is not None:
-            self.epoch_cache = tuple(c.detach().clone() for c in new_cache)
+        # if new_cache is not None:
+        #     self.epoch_cache = tuple(c.detach().clone() for c in new_cache)
 
         output_flat, targets_flat = output.reshape(
             -1, output.size(-1)), targets.reshape(-1)
