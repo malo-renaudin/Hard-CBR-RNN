@@ -108,12 +108,12 @@ class Custom_model(nn.Module):
     def init_cache(self, observation):
         device = observation.device
         bsz = observation.size(0) #if len(observation.size()) > 1 else 1
-        hidden = torch.zeros(self.compressed_dim, bsz,
+        hidden = torch.zeros(1, bsz,
                              self.nhid, device = device)
-        key_cache = torch.zeros(bsz, self.compressed_dim,
+        key_cache = torch.zeros(bsz, 1,
                                 self.nhid, device=device)
         value_cache = torch.zeros(
-            bsz, self.compressed_dim, self.nhid, device=device)
+            bsz, 1, self.nhid, device=device)
         return hidden, key_cache, value_cache
 
     def update_cache(self, key_cache, value_cache, hidden, key_i, value_i, hidden_i):
@@ -129,18 +129,18 @@ class Custom_model(nn.Module):
         return key_cache, value_cache, hidden
 
 
-    def compress_cache(self, hidden, key_cache, value_cache):
-        # Keep only the last N tokens (most recent)
-        if hidden.size(0) > self.compressed_dim:
-            hidden_compressed = hidden[-self.compressed_dim:]
-            key_compressed = key_cache[:, -self.compressed_dim:]
-            value_compressed = value_cache[:, -self.compressed_dim:]
-        else:
-            hidden_compressed = hidden
-            key_compressed = key_cache
-            value_compressed = value_cache
+    # def compress_cache(self, hidden, key_cache, value_cache):
+    #     # Keep only the last N tokens (most recent)
+    #     if hidden.size(0) > self.compressed_dim:
+    #         hidden_compressed = hidden[-self.compressed_dim:]
+    #         key_compressed = key_cache[:, -self.compressed_dim:]
+    #         value_compressed = value_cache[:, -self.compressed_dim:]
+    #     else:
+    #         hidden_compressed = hidden
+    #         key_compressed = key_cache
+    #         value_compressed = value_cache
 
-        return hidden_compressed, key_compressed, value_compressed
+    #     return hidden_compressed, key_compressed, value_compressed
 
 
     # ----------------------
@@ -174,7 +174,7 @@ class Custom_model(nn.Module):
                 i, emb, query, attn_out, hidden)
             key_cache, value_cache, hidden = self.update_cache(
                 key_cache, value_cache, hidden, k_i, v_i, h_i)
-        decoded = self.decoder(hidden[-self.seq_len:])#.transpose(0, 1)
+        decoded = self.decoder(hidden[1:])#.transpose(0, 1)
         # cache = self.compress_cache(hidden, key_cache, value_cache)
 
         return decoded
