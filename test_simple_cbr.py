@@ -106,13 +106,14 @@ class CBR_RNN(nn.Module):
     # ----------------------
 
     def init_cache(self, observation):
+        device = observation.device
         bsz = observation.size(0) #if len(observation.size()) > 1 else 1
         hidden = torch.zeros(self.compressed_dim, bsz,
-                             self.nhid, device = self.device)
+                             self.nhid, device = device)
         key_cache = torch.zeros(bsz, self.compressed_dim,
-                                self.nhid, device=self.device)
+                                self.nhid, device=device)
         value_cache = torch.zeros(
-            bsz, self.compressed_dim, self.nhid, device=self.device)
+            bsz, self.compressed_dim, self.nhid, device=device)
         return hidden, key_cache, value_cache
 
     def update_cache(self, key_cache, value_cache, hidden, key_i, value_i, hidden_i):
