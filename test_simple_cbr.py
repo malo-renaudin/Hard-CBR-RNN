@@ -225,16 +225,25 @@ class LanguageModel(pl.LightningModule):
         self.epoch_cache = None
     
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=1.0)  # peak LR
-
-        def lr_lambda(step):
-            warmup_steps = 4000
-            d_model = 512
-            step = max(step, 1)
-            return (d_model ** -0.5) * min(step ** -0.5, step * warmup_steps ** -1.5)
-
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-        return [optimizer], [scheduler]
+        optimizer = torch.optim.AdamW(
+            self.parameters(), 
+            lr=3e-4,  # Peak LR - good starting point for 60M params
+            weight_decay=0.1
+        )
+        
+        # Calculate total steps
+        total_steps = self.trainer.estimated_stepping_batches
+        warmup_steps = int(0.1 * total_steps)  # 10% warmup
+        
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=3e-4,
+            total_steps=total_steps,
+            pct_start=0.1,  # 10% warmup
+            anneal_strategy='cos'
+        )
+    
+        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
 
 # ----------------------------
 # 5️⃣ Training
