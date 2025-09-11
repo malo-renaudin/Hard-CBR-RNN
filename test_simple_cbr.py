@@ -279,7 +279,7 @@ def main():
 
     # Model + Trainer
     model = LanguageModel(tokenizer.vocab_size)
-    trainer = pl.Trainer(gradient_clip_val=0.25, max_epochs=20, accelerator="gpu", devices=1, precision='bf16-mixed')
+    trainer = pl.Trainer(gradient_clip_val=0.25, max_epochs=5, accelerator="gpu", devices=1, precision='bf16-mixed')
     trainer.fit(model, train_loader, val_loader)
 
 
