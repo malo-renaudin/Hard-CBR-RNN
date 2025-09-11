@@ -6,14 +6,13 @@ import pytorch_lightning as pl
 import datasets
 from pathlib import Path
 from collections import Counter
-from cbr_lightning.attention import MultiheadAttention
 import math
+
 # ----------------------------
 # 1️⃣ Tokenizer
 # ----------------------------
 class WordTokenizer:
     def __init__(self, list_of_texts, vocab_size=50000):
-        tokens = []
         tokens = []
         for text in list_of_texts:
             tokens.extend(text.split())
@@ -51,19 +50,88 @@ class WikiTextDataset(Dataset):
 
 
 # ----------------------------
-# 3️⃣ Transformer Model
+# 3️⃣ Custom Multihead Attention with Causal Masking
 # ----------------------------
+class CausalMultiheadAttention(nn.Module):
+    def __init__(self, nhid, nheads=1, dropout=0.1):
+        super().__init__()
+        self.nhid = nhid
+        self.nheads = nheads
+        self.head_dim = nhid // nheads
+        
+        assert nhid % nheads == 0, "nhid must be divisible by nheads"
+        
+        # Linear projections for queries, keys, values
+        self.q_proj = nn.Linear(nhid, nhid)
+        self.k_proj = nn.Linear(nhid, nhid)
+        self.v_proj = nn.Linear(nhid, nhid)
+        self.out_proj = nn.Linear(nhid, nhid)
+        
+        self.scale = 1.0 / math.sqrt(self.head_dim)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, query, key_cache, value_cache, position_i):
+        """
+        Args:
+            query: [batch, nhid] - query for current position
+            key_cache: [batch, cache_len, nhid] - cached keys
+            value_cache: [batch, cache_len, nhid] - cached values  
+            position_i: int - current position (for causal masking)
+        """
+        batch_size = query.size(0)
+        cache_len = key_cache.size(1)
+        
+        # Project current query
+        q = self.q_proj(query)  # [batch, nhid]
+        
+        # Project cached keys and values
+        k = self.k_proj(key_cache)  # [batch, cache_len, nhid]
+        v = self.v_proj(value_cache)  # [batch, cache_len, nhid]
+        
+        # Reshape for multihead attention
+        q = q.view(batch_size, self.nheads, self.head_dim)  # [batch, nheads, head_dim]
+        k = k.view(batch_size, cache_len, self.nheads, self.head_dim).transpose(1, 2)  # [batch, nheads, cache_len, head_dim]
+        v = v.view(batch_size, cache_len, self.nheads, self.head_dim).transpose(1, 2)  # [batch, nheads, cache_len, head_dim]
+        
+        # Compute attention scores
+        q_expanded = q.unsqueeze(-1)  # [batch, nheads, head_dim, 1]
+        attn_scores = torch.matmul(k, q_expanded).squeeze(-1)  # [batch, nheads, cache_len]
+        
+        # Apply causal masking - can only attend to positions 0 through position_i
+        causal_mask = torch.zeros(cache_len, device=query.device)
+        if position_i + 1 < cache_len:
+            causal_mask[position_i + 1:] = float('-inf')
+        
+        # Add causal mask to all heads
+        attn_scores = attn_scores + causal_mask.unsqueeze(0).unsqueeze(0)  # [batch, nheads, cache_len]
+            
+        # Scale and apply softmax
+        attn_scores = attn_scores * self.scale
+        attn_weights = F.softmax(attn_scores, dim=-1)  # [batch, nheads, cache_len]
+        attn_weights = self.dropout(attn_weights)
+        
+        # Apply attention to values
+        attn_weights_expanded = attn_weights.unsqueeze(-1)  # [batch, nheads, cache_len, 1]
+        attn_out = (attn_weights_expanded * v).sum(dim=2)  # [batch, nheads, head_dim]
+        
+        # Concatenate heads and project
+        attn_out = attn_out.view(batch_size, self.nhid)  # [batch, nhid]
+        attn_out = self.out_proj(attn_out)
+        
+        return attn_out
 
+
+# ----------------------------
+# 4️⃣ Fixed Transformer Model
+# ----------------------------
 class Custom_model(nn.Module):
-    def __init__(self, ntoken, ninp=512, nhid=512, nheads=1, seq_len=35, compressed_dim=1, dropout=0.5, learning_rate=1e-3,
-                 criterion='cross_entropy', optimizer_type='adam', weight_decay=0.0):
+    def __init__(self, ntoken, ninp=512, nhid=512, nheads=1, seq_len=35, dropout=0.5):
         super().__init__()
 
         # Model components
-        self.encoder = nn.Embedding(ntoken+1, ninp)
+        self.encoder = nn.Embedding(ntoken, ninp)  # Fixed: removed +1
         self.nhid = nhid
         self.seq_len = seq_len
-        self.compressed_dim = compressed_dim
         self.nheads = nheads
         self.drop = nn.Dropout(dropout)
         self.tanh = nn.Tanh()
@@ -76,13 +144,10 @@ class Custom_model(nn.Module):
         self.f_norm = nn.LayerNorm(nhid*3)
         self.final_h = nn.Linear(nhid*4, nhid*3)
 
-        self.decoder = nn.Linear(nhid, ntoken+1)
-        self.multihead_attn = nn.MultiheadAttention(
-            embed_dim=nhid, num_heads=nheads, batch_first=True)
-
-        # Training hyperparameters
-        self.learning_rate = learning_rate
-        self.criterion = criterion
+        self.decoder = nn.Linear(nhid, ntoken)  # Fixed: removed +1
+        
+        # Use custom causal attention instead of PyTorch's
+        self.multihead_attn = CausalMultiheadAttention(nhid, nheads, dropout)
         
         self.init_weights()
 
@@ -93,115 +158,79 @@ class Custom_model(nn.Module):
                     nn.init.ones_(param)
                 elif "encoder" in name or "decoder" in name:
                     nn.init.normal_(param, 0, 0.1)
-                elif "multihead_attn" in name:
-                    nn.init.xavier_uniform_(param)
                 else:
-                    nn.init.kaiming_normal_(
-                        param, mode="fan_in", nonlinearity="relu")
+                    nn.init.kaiming_normal_(param, mode="fan_in", nonlinearity="tanh")
             elif "bias" in name:
                 nn.init.zeros_(param)
 
-    # ----------------------
-    # Cache handling
-    # ----------------------
-
     def init_cache(self, observation):
         device = observation.device
-        bsz = observation.size(0) #if len(observation.size()) > 1 else 1
-        hidden = torch.zeros(1, bsz,
-                             self.nhid, device = device)
-        key_cache = torch.zeros(bsz, 1,
-                                self.nhid, device=device)
-        value_cache = torch.zeros(
-            bsz, 1, self.nhid, device=device)
+        bsz = observation.size(0)
+        hidden = torch.zeros(1, bsz, self.nhid, device=device)
+        key_cache = torch.zeros(bsz, 1, self.nhid, device=device)
+        value_cache = torch.zeros(bsz, 1, self.nhid, device=device)
         return hidden, key_cache, value_cache
 
     def update_cache(self, key_cache, value_cache, hidden, key_i, value_i, hidden_i):
-        # Ensure old cache has NO graph connections
-        hidden_detached = hidden.detach() if hidden.requires_grad else hidden
-        key_detached = key_cache.detach() if key_cache.requires_grad else key_cache
-        value_detached = value_cache.detach() if value_cache.requires_grad else value_cache
+        # Detach old cache to prevent gradient issues
+        hidden_detached = hidden.detach()
+        key_detached = key_cache.detach()
+        value_detached = value_cache.detach()
 
-        # Now safe to concatenate
+        # Concatenate new states
         hidden = torch.cat((hidden_detached, hidden_i.unsqueeze(0)), dim=0)
         key_cache = torch.cat((key_detached, key_i.unsqueeze(1)), dim=1)
         value_cache = torch.cat((value_detached, value_i.unsqueeze(1)), dim=1)
         return key_cache, value_cache, hidden
 
-
-    # def compress_cache(self, hidden, key_cache, value_cache):
-    #     # Keep only the last N tokens (most recent)
-    #     if hidden.size(0) > self.compressed_dim:
-    #         hidden_compressed = hidden[-self.compressed_dim:]
-    #         key_compressed = key_cache[:, -self.compressed_dim:]
-    #         value_compressed = value_cache[:, -self.compressed_dim:]
-    #     else:
-    #         hidden_compressed = hidden
-    #         key_compressed = key_cache
-    #         value_compressed = value_cache
-
-    #     return hidden_compressed, key_compressed, value_compressed
-
-
-    # ----------------------
-    # Forward
-    # ----------------------
     def get_query(self, emb, hidden):
         combined = torch.cat((emb, hidden[-1]), -1)
         q = self.drop(self.tanh(self.q_norm(self.q(combined))))
-        return q.unsqueeze(1)
+        return q
 
     def intermediate_layers(self, i, emb, query, attn, hidden):
         inter_input = torch.cat((emb[:,i,:], query, attn, hidden[-1]), -1)
-        inter = self.drop(self.tanh(self.int_norm(
-            self.intermediate_h(inter_input))))
+        inter = self.drop(self.tanh(self.int_norm(self.intermediate_h(inter_input))))
         final = self.drop(self.tanh(self.f_norm(self.final_h(inter))))
         k_i, v_i, h_i = final.split(self.nhid, dim=-1)
         return k_i, v_i, h_i
 
     def forward(self, observation, initial_cache=None):
         seq_len = observation.size(1)
-        hidden, key_cache, value_cache = initial_cache if initial_cache else self.init_cache(
-            observation)
+        hidden, key_cache, value_cache = initial_cache if initial_cache else self.init_cache(observation)
         emb = self.drop(self.encoder(observation))
+        
         for i in range(seq_len):
             query = self.get_query(emb[:,i,:], hidden)
-            attn_out, _ = self.multihead_attn(
-                query, key_cache, value_cache, need_weights=False)
-            attn_out = attn_out.squeeze(1)
-            query = query.squeeze(1)
-            k_i, v_i, h_i = self.intermediate_layers(
-                i, emb, query, attn_out, hidden)
-            key_cache, value_cache, hidden = self.update_cache(
-                key_cache, value_cache, hidden, k_i, v_i, h_i)
-        decoded = self.decoder(hidden[1:])#.transpose(0, 1)
-        # cache = self.compress_cache(hidden, key_cache, value_cache)
-
+            
+            # Use custom causal attention with position information
+            attn_out = self.multihead_attn(query, key_cache, value_cache, position_i=i)
+            
+            k_i, v_i, h_i = self.intermediate_layers(i, emb, query, attn_out, hidden)
+            key_cache, value_cache, hidden = self.update_cache(key_cache, value_cache, hidden, k_i, v_i, h_i)
+        
+        # Use reference model approach: skip initial hidden state
+        output = hidden[1:]  # Skip position 0, use [1, 2, ..., seq_len]
+        decoded = self.decoder(output.transpose(0, 1))  # Convert to [batch, seq_len, vocab_size]
+        
         return decoded
 
-  
 
 # ----------------------------
-# 4️⃣ Lightning Module for Transformer
+# 5️⃣ Lightning Module for Transformer
 # ----------------------------
 class LanguageModel(pl.LightningModule):
     def __init__(self, vocab_size):
         super().__init__()
         self.model = Custom_model(ntoken=vocab_size)
-        self.epoch_cache = None
         
     def _shared_step(self, batch, stage):
         data, targets = batch
-        # if self.epoch_cache is None:
-        #     self.epoch_cache = self.model.init_cache(data)
         initial_cache = self.model.init_cache(data)
-        output= self.model.forward(data, initial_cache=initial_cache)
+        output = self.model.forward(data, initial_cache=initial_cache)
 
-        # if new_cache is not None:
-        #     self.epoch_cache = tuple(c.detach().clone() for c in new_cache)
-
-        output_flat, targets_flat = output.reshape(
-            -1, output.size(-1)), targets.reshape(-1)
+        output_flat = output.reshape(-1, output.size(-1))
+        targets_flat = targets.reshape(-1)
         loss = F.cross_entropy(output_flat, targets_flat)
         ppl = torch.exp(loss)
 
@@ -212,64 +241,27 @@ class LanguageModel(pl.LightningModule):
 
         return loss
 
-    def training_step(self, batch, batch_idx): return self._shared_step(
-        batch, "train")
+    def training_step(self, batch, batch_idx):
+        return self._shared_step(batch, "train")
 
-    def validation_step(
-        self, batch, batch_idx): return self._shared_step(batch, "val")
+    def validation_step(self, batch, batch_idx):
+        return self._shared_step(batch, "val")
 
-    def test_step(self, batch, batch_idx): return self._shared_step(
-        batch, "test")
-
-    def on_train_epoch_end(self):
-        self.epoch_cache = None
+    def test_step(self, batch, batch_idx):
+        return self._shared_step(batch, "test")
     
-    # def configure_optimizers(self):
-    #     optimizer = torch.optim.AdamW(
-    #         self.parameters(),
-    #         lr=2e-4,
-    #         weight_decay=0.1,
-    #         eps=1e-6,
-    #         betas=(0.9, 0.95)
-    #     )
-        
-    #     total_steps = self.trainer.estimated_stepping_batches
-    #     warmup_steps = int(0.15 * total_steps)
-        
-    #     def lr_lambda(step):
-    #         if step < warmup_steps:
-    #             return step / warmup_steps
-    #         else:
-    #             progress = (step - warmup_steps) / (total_steps - warmup_steps)
-    #             return 0.5 * (1 + math.cos(math.pi * progress))
-        
-    #     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-        
-    #     return {
-    #         "optimizer": optimizer,
-    #         "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
-    #         "gradient_clip_val": 1.0,
-    #         "gradient_clip_algorithm": "norm"
-    #     }
     def configure_optimizers(self):
-        # optimizer = torch.optim.AdamW(
-        #     self.parameters(),
-        #     lr=1e-3,        # Increase from 2e-4
-        #     weight_decay=0.01,  # Decrease from 0.1
-        #     eps=1e-8,       # Standard value
-        #     betas=(0.9, 0.999)  # Standard Adam betas
-        # )
         optimizer = torch.optim.SGD(
-        self.parameters(), 
-        lr=1.0, 
-        momentum=0.9, 
-        nesterov=True
+            self.parameters(), 
+            lr=1.0, 
+            momentum=0.9, 
+            nesterov=True
         )
-        
         return optimizer
 
+
 # ----------------------------
-# 5️⃣ Training
+# 6️⃣ Training
 # ----------------------------
 def main():
     pl.seed_everything(42)
@@ -282,7 +274,7 @@ def main():
     test_dataset = raw['test']
 
     # Build tokenizer on train + val + test
-    all_texts = list(train_dataset['text'])+ list(val_dataset['text'])+ list(test_dataset['text'])
+    all_texts = list(train_dataset['text']) + list(val_dataset['text']) + list(test_dataset['text'])
     tokenizer = WordTokenizer(all_texts, vocab_size=50000)
 
     # Datasets + Dataloaders
@@ -295,7 +287,7 @@ def main():
 
     # Model + Trainer
     model = LanguageModel(tokenizer.vocab_size)
-    trainer = pl.Trainer(gradient_clip_val=0.25, max_epochs=5, accelerator="gpu", devices=1, precision='bf16-mixed')
+    trainer = pl.Trainer(gradient_clip_val=1.0, max_epochs=5, accelerator="gpu", devices=1, precision='bf16-mixed')
     trainer.fit(model, train_loader, val_loader)
 
 
