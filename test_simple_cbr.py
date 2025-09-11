@@ -55,7 +55,7 @@ class WikiTextDataset(Dataset):
 # ----------------------------
 
 class CBR_RNN(nn.Module):
-    def __init__(self, ntoken, ninp=512, nhid=512, nheads=1, seq_len=128, compressed_dim=1, dropout=0.5, learning_rate=1e-3,
+    def __init__(self, ntoken, ninp=512, nhid=512, nheads=1, seq_len=35, compressed_dim=1, dropout=0.5, learning_rate=1e-3,
                  criterion='cross_entropy', optimizer_type='adam', weight_decay=0.0):
         super().__init__()
 
