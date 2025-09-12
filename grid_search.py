@@ -236,7 +236,7 @@ def create_configs():
 mkdir -p job_outputs
 
 # Run the training script with the config for this array job
-python train_single.py $SLURM_ARRAY_TASK_ID
+python grid_search.py $SLURM_ARRAY_TASK_ID
 """
     
     with open("run_array.sh", 'w') as f:
