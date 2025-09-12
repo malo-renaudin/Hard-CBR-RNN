@@ -7,7 +7,7 @@ import datasets
 import math
 import numpy as np
 from collections import Counter
-from original_cbr import CueBasedRNNModel 
+from original_cbr import CueBasedRNNModel, OptimizedCueBasedRNNModel 
 # Assume CueBasedRNNModel is imported from your module
 # from your_module import CueBasedRNNModel
 
@@ -79,16 +79,16 @@ class CBRLanguageModel(pl.LightningModule):
         self.save_hyperparameters()
         
         # Initialize the CueBasedRNNModel
-        self.model = CueBasedRNNModel(
+        self.model = OptimizedCueBasedRNNModel(
             ntoken=vocab_size,
             ninp=ninp,
             nhid=nhid, 
             nlayers=nlayers,
-            dropout=dropout,
-            tie_weights=tie_weights,
-            aux_objective=use_aux_objective,
-            nauxclasses=aux_vocab_size,
-            device=self.device
+            dropout=dropout
+            # tie_weights=tie_weights,
+            # aux_objective=use_aux_objective,
+            # nauxclasses=aux_vocab_size,
+            # device=self.device
         )
         
         # Training hyperparameters

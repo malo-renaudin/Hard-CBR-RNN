@@ -198,3 +198,137 @@ class CueBasedRNNModel(nn.Module):
             for weight in module.parameters():
                 weight.data.uniform_(-initrange, initrange)
 
+class OptimizedCueBasedRNNModel(nn.Module):
+    def __init__(self, ntoken, ninp, nhid, nlayers, dropout=0.5):
+        super().__init__()
+        self.tanh = nn.Tanh()
+        self.drop = nn.Dropout(dropout)
+        self.encoder = nn.Embedding(ntoken+1, ninp)       
+        self.q = nn.Linear(ninp+nhid, nhid)
+        self.intermediate_h = nn.Linear(nhid*4, nhid*4)
+        self.final_h = nn.Linear(nhid*4, nhid*3)
+        self.decoder = nn.Linear(nhid, ntoken+1)
+        self.q_norm = torch.nn.LayerNorm(nhid)
+        self.int_norm = torch.nn.LayerNorm(nhid * 4)
+        self.f_norm = torch.nn.LayerNorm(nhid * 3)            
+        self.nhid = nhid
+        self.attn_div_factor = np.sqrt(nhid)
+        
+        self.init_weights()
+
+    def init_weights(self):
+        """ Initialize encoder and decoder weights """
+        initrange = 0.1
+        self.encoder.weight.data.uniform_(-initrange, initrange)
+        self.decoder.bias.data.fill_(0)
+        self.decoder.weight.data.uniform_(-initrange, initrange)
+
+    def random_parameters(self):
+        """ Randomly initialize all RNN parameters but not the encoder or decoder """
+        initrange = 0.1
+        for module in [self.q, self.intermediate_h, self.final_h]:
+            for weight in module.parameters():
+                weight.data.uniform_(-initrange, initrange)
+
+    def create_causal_mask_vectorized(self, seq_len, device):
+        """Create causal mask for all positions at once"""
+        # Create a upper triangular mask for all positions
+        mask = torch.triu(torch.full((seq_len, seq_len), float('-inf'), device=device), diagonal=1)
+        return mask
+
+    def forward(self, observation, initial_cache):
+        hidden_init, key_cache_init, value_cache_init = initial_cache
+        seq_len, batch_size = observation.shape
+        
+        # Pre-allocate tensors to avoid repeated concatenations
+        device = observation.device
+        hidden_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)
+        key_cache_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)  
+        value_cache_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)
+        
+        # Initialize with provided cache
+        hidden_states[0] = hidden_init.squeeze(0)
+        key_cache_states[0] = key_cache_init.squeeze(0)
+        value_cache_states[0] = value_cache_init.squeeze(0)
+        
+        # Embed all tokens at once
+        emb = self.drop(self.encoder(observation))  # seq_len x batch_size x ninp
+        
+        # Create causal mask once for all positions
+        causal_mask = self.create_causal_mask_vectorized(seq_len, device)
+        
+        for i in range(seq_len):
+            # Current cache length (including current position)
+            cache_len = i + 1
+            
+            # Get current embeddings and hidden state
+            curr_emb = emb[i]  # batch_size x ninp
+            curr_hidden = hidden_states[i]  # batch_size x nhid
+            
+            # Query computation
+            query_input = torch.cat([curr_emb, curr_hidden], dim=-1)
+            query = self.drop(self.tanh(self.q_norm(self.q(query_input))))  # batch_size x nhid
+            
+            # Attention computation - vectorized over cache
+            current_keys = key_cache_states[:cache_len]  # cache_len x batch_size x nhid
+            current_values = value_cache_states[:cache_len]  # cache_len x batch_size x nhid
+            
+            # Compute attention scores: (cache_len x batch_size x nhid) @ (batch_size x nhid x 1)
+            attn_scores = torch.bmm(
+                current_keys.transpose(0, 1),  # batch_size x cache_len x nhid
+                query.unsqueeze(-1)  # batch_size x nhid x 1
+            ).squeeze(-1)  # batch_size x cache_len
+            
+            # Apply causal mask and scaling
+            masked_scores = attn_scores + causal_mask[i, :cache_len].unsqueeze(0)
+            masked_scores = masked_scores / self.attn_div_factor
+            attn_weights = F.softmax(masked_scores, dim=-1)  # batch_size x cache_len
+            
+            # Compute attention output
+            attn = torch.bmm(
+                attn_weights.unsqueeze(1),  # batch_size x 1 x cache_len
+                current_values.transpose(0, 1)  # batch_size x cache_len x nhid  
+            ).squeeze(1)  # batch_size x nhid
+            
+            # Intermediate computation
+            intermediate_input = torch.cat([curr_emb, query, attn, curr_hidden], dim=-1)
+            intermediate = self.drop(self.tanh(self.int_norm(self.intermediate_h(intermediate_input))))
+            
+            # Final computation and splitting
+            final_output = self.drop(self.tanh(self.f_norm(self.final_h(intermediate))))
+            key_i, value_i, hidden_i = final_output.split(self.nhid, dim=-1)
+            
+            # Store in pre-allocated tensors
+            hidden_states[i + 1] = hidden_i
+            key_cache_states[i + 1] = key_i
+            value_cache_states[i + 1] = value_i
+            
+        # Output processing
+        output = hidden_states[1:]  # Remove initial state
+        decoded = self.decoder(output)
+        
+        return decoded, hidden_states
+
+    def init_cache(self, observation):
+        device = observation.device
+        if len(observation.size()) > 1:
+            bsz = observation.size(dim=-1)
+        else:
+            bsz = 1
+
+        return (torch.zeros(1, bsz, self.nhid, device=device), 
+                torch.zeros(1, bsz, self.nhid, device=device), 
+                torch.zeros(1, bsz, self.nhid, device=device))
+
+    def set_parameters(self, init_val):
+        for module in [self.q, self.intermediate_h, self.final_h]:
+            for weight in module.parameters():
+                weight.data.fill_(init_val)
+        self.encoder.weight.data.fill_(init_val)
+        self.decoder.weight.data.fill_(init_val)
+
+    def randomize_parameters(self):
+        initrange = 0.1
+        for module in [self.q, self.intermediate_h, self.final_h]:
+            for weight in module.parameters():
+                weight.data.uniform_(-initrange, initrange)
