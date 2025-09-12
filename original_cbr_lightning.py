@@ -249,7 +249,7 @@ def train_cbr_model():
     torch.set_float32_matmul_precision('medium')
     
     # Load WikiText-103 dataset
-    data_dir = "wikitext-103-raw"  # Adjust path as needed
+    data_dir = "cbr_lightning/wikitext-103-raw"  # Adjust path as needed
     raw = datasets.load_from_disk(data_dir)
     train_dataset = raw['train']
     val_dataset = raw['validation'] 
