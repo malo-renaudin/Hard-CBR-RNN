@@ -38,6 +38,10 @@ class MultiHeadAttention(nn.Module):
         
         # Apply mask if provided (for causal/padding masks)
         if mask is not None:
+            # Expand mask to match scores dimensions
+            # mask: [batch_size, seq_len, seq_len] -> [batch_size, n_heads, seq_len, seq_len]
+            if mask.dim() == 3:  # [batch_size, seq_len, seq_len]
+                mask = mask.unsqueeze(1).expand(-1, self.n_heads, -1, -1)
             scores = scores.masked_fill(mask == 0, -1e9)
         
         # Apply softmax
