@@ -206,36 +206,36 @@ class CBRLanguageModel(pl.LightningModule):
         """Test step"""
         return self._shared_step(batch, "test")
     
-def configure_optimizers(self):
-    """
-    Simple but effective optimizer for language modeling
-    AdamW with cosine scheduling - proven to work well
-    """
-    # AdamW is the gold standard for transformers/language models
-    optimizer = torch.optim.AdamW(
-        self.parameters(),
-        lr=self.lr,
-        betas=(0.9, 0.999),  # Standard values work well
-        eps=1e-8,
-        weight_decay=self.weight_decay,
-        amsgrad=False
-    )
-    
-    # Cosine annealing - smooth learning rate decay
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=self.trainer.max_epochs,
-        eta_min=self.lr * 0.01  # End at 1% of starting LR
-    )
-    
-    return {
-        "optimizer": optimizer,
-        "lr_scheduler": {
-            "scheduler": scheduler,
-            "interval": "epoch",
-            "frequency": 1
+    def configure_optimizers(self):
+        """
+        Simple but effective optimizer for language modeling
+        AdamW with cosine scheduling - proven to work well
+        """
+        # AdamW is the gold standard for transformers/language models
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.lr,
+            betas=(0.9, 0.999),  # Standard values work well
+            eps=1e-8,
+            weight_decay=self.weight_decay,
+            amsgrad=False
+        )
+        
+        # Cosine annealing - smooth learning rate decay
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=self.trainer.max_epochs,
+            eta_min=self.lr * 0.01  # End at 1% of starting LR
+        )
+        
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",
+                "frequency": 1
+            }
         }
-    }
 
 def train_cbr_model():
     """
