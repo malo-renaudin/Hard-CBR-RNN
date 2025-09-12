@@ -151,7 +151,7 @@ class CBRLanguageModel(pl.LightningModule):
         # masks = self.create_causal_mask(seq_len, batch_size, sequences.device)
         
         # Forward pass through model
-        output, final_hidden, aux_output, attn_log = self.model.forward(
+        output, final_hidden = self.model.forward(
             observation=sequences,
             initial_cache=initial_cache
             # masks=masks,
