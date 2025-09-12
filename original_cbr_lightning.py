@@ -84,8 +84,8 @@ class CBRLanguageModel(pl.LightningModule):
             ninp=ninp,
             nhid=nhid, 
             nlayers=nlayers,
-            dropout=dropout,
-            nheads=nheads
+            dropout=dropout
+            # nheads=nheads
             # tie_weights=tie_weights,
             # aux_objective=use_aux_objective,
             # nauxclasses=aux_vocab_size,
@@ -304,7 +304,7 @@ def train_cbr_model(use_gumbel_softmax=False, gumbel_config=None):
         'dropout': 0.5,
         'lr': 3e-4,
         'weight_decay': 0.0,
-        'nheads': 8,
+        # 'nheads': 8,
         'use_gumbel_softmax': use_gumbel_softmax
     }
     
