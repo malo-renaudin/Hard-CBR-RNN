@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch
 import gc
 import torch.nn.functional as F
+import math
 
 class CueBasedRNNModel(nn.Module):
     def __init__(self, ntoken, ninp, nhid, nlayers,
@@ -290,6 +291,193 @@ class OptimizedCueBasedRNNModel(nn.Module):
                 attn_weights.unsqueeze(1),  # batch_size x 1 x cache_len
                 current_values.transpose(0, 1)  # batch_size x cache_len x nhid  
             ).squeeze(1)  # batch_size x nhid
+            
+            # Intermediate computation
+            intermediate_input = torch.cat([curr_emb, query, attn, curr_hidden], dim=-1)
+            intermediate = self.drop(self.tanh(self.int_norm(self.intermediate_h(intermediate_input))))
+            
+            # Final computation and splitting
+            final_output = self.drop(self.tanh(self.f_norm(self.final_h(intermediate))))
+            key_i, value_i, hidden_i = final_output.split(self.nhid, dim=-1)
+            
+            # Store in pre-allocated tensors
+            hidden_states[i + 1] = hidden_i
+            key_cache_states[i + 1] = key_i
+            value_cache_states[i + 1] = value_i
+            
+        # Output processing
+        output = hidden_states[1:]  # Remove initial state
+        decoded = self.decoder(output)
+        
+        return decoded, hidden_states
+
+    def init_cache(self, observation):
+        device = observation.device
+        if len(observation.size()) > 1:
+            bsz = observation.size(dim=-1)
+        else:
+            bsz = 1
+
+        return (torch.zeros(1, bsz, self.nhid, device=device), 
+                torch.zeros(1, bsz, self.nhid, device=device), 
+                torch.zeros(1, bsz, self.nhid, device=device))
+
+    def set_parameters(self, init_val):
+        for module in [self.q, self.intermediate_h, self.final_h]:
+            for weight in module.parameters():
+                weight.data.fill_(init_val)
+        self.encoder.weight.data.fill_(init_val)
+        self.decoder.weight.data.fill_(init_val)
+
+    def randomize_parameters(self):
+        initrange = 0.1
+        for module in [self.q, self.intermediate_h, self.final_h]:
+            for weight in module.parameters():
+                weight.data.uniform_(-initrange, initrange)
+
+
+class OptimizedCueBasedRNNModel_MH(nn.Module):
+    def __init__(self, ntoken, ninp, nhid, nlayers, nheads, dropout=0.5):
+        super().__init__()
+        
+        assert nhid % nheads == 0, f"nhid ({nhid}) must be divisible by nheads ({nheads})"
+
+        self.tanh = nn.Tanh()
+        self.drop = nn.Dropout(dropout)
+        self.encoder = nn.Embedding(ntoken+1, ninp)       
+        self.q = nn.Linear(ninp+nhid, nhid)
+        self.intermediate_h = nn.Linear(nhid*4, nhid*4)
+        self.final_h = nn.Linear(nhid*4, nhid*3)
+        self.decoder = nn.Linear(nhid, ntoken+1)
+        self.q_norm = torch.nn.LayerNorm(nhid)
+        self.int_norm = torch.nn.LayerNorm(nhid * 4)
+        self.f_norm = torch.nn.LayerNorm(nhid * 3)            
+        self.nhid = nhid
+        self.nheads=nheads
+        self.d_k= nhid//nheads
+        self.attn_scale = math.sqrt(self.d_k)
+        self.init_weights()
+
+    def init_weights(self):
+        """ Initialize encoder and decoder weights """
+        initrange = 0.1
+        self.encoder.weight.data.uniform_(-initrange, initrange)
+        self.decoder.bias.data.fill_(0)
+        self.decoder.weight.data.uniform_(-initrange, initrange)
+
+    def random_parameters(self):
+        """ Randomly initialize all RNN parameters but not the encoder or decoder """
+        initrange = 0.1
+        for module in [self.q, self.intermediate_h, self.final_h]:
+            for weight in module.parameters():
+                weight.data.uniform_(-initrange, initrange)
+
+    def create_causal_mask_vectorized(self, seq_len, device):
+        """Create causal mask for all positions at once"""
+        # Create a upper triangular mask for all positions
+        mask = torch.triu(torch.full((seq_len, seq_len), float('-inf'), device=device), diagonal=1)
+        return mask
+    
+    def multi_head_attention(self, query, keys, values, mask=None):
+        """
+        Multi-head attention computation
+        
+        Args:
+            query: [batch_size, nhid] - current query
+            keys: [cache_len, batch_size, nhid] - all previous keys
+            values: [cache_len, batch_size, nhid] - all previous values  
+            mask: [cache_len] - causal mask for current position
+        
+        Returns:
+            attended: [batch_size, nhid] - attended representation
+            attn_weights: [batch_size, nheads, cache_len] - attention weights
+        """
+        batch_size = query.shape[0]
+        cache_len = keys.shape[0]
+        
+        # Reshape for multi-head attention
+        # Query: [batch_size, nhid] -> [batch_size, nheads, d_k]
+        q = query.view(batch_size, self.nheads, self.d_k)
+        
+        # Keys: [cache_len, batch_size, nhid] -> [cache_len, batch_size, nheads, d_k]
+        k = keys.view(cache_len, batch_size, self.nheads, self.d_k)
+        
+        # Values: [cache_len, batch_size, nhid] -> [cache_len, batch_size, nheads, d_k]  
+        v = values.view(cache_len, batch_size, self.nheads, self.d_k)
+        
+        # Transpose for batch matrix multiplication
+        # k: [cache_len, batch_size, nheads, d_k] -> [batch_size, nheads, cache_len, d_k]
+        k = k.permute(1, 2, 0, 3)
+        # v: [cache_len, batch_size, nheads, d_k] -> [batch_size, nheads, cache_len, d_k]
+        v = v.permute(1, 2, 0, 3)
+        
+        # Compute attention scores
+        # q: [batch_size, nheads, d_k] -> [batch_size, nheads, 1, d_k]
+        # k: [batch_size, nheads, cache_len, d_k]
+        # scores: [batch_size, nheads, 1, cache_len]
+        scores = torch.matmul(q.unsqueeze(2), k.transpose(-2, -1)) / self.attn_scale
+        scores = scores.squeeze(2)  # [batch_size, nheads, cache_len]
+        
+        # Apply causal mask if provided
+        if mask is not None:
+            # mask: [cache_len] -> [batch_size, nheads, cache_len]
+            mask = mask.unsqueeze(0).unsqueeze(0).expand(batch_size, self.nheads, -1)
+            scores = scores + mask
+        
+        # Apply softmax
+        attn_weights = F.softmax(scores, dim=-1)  # [batch_size, nheads, cache_len]
+        
+        # Apply attention to values
+        # attn_weights: [batch_size, nheads, cache_len] -> [batch_size, nheads, 1, cache_len]
+        # v: [batch_size, nheads, cache_len, d_k]
+        # attended: [batch_size, nheads, 1, d_k] -> [batch_size, nheads, d_k]
+        attended = torch.matmul(attn_weights.unsqueeze(2), v).squeeze(2)
+        
+        # Concatenate heads: [batch_size, nheads, d_k] -> [batch_size, nhid]
+        attended = attended.view(batch_size, self.nhid)
+        
+        return attended, attn_weights
+
+    def forward(self, observation, initial_cache):
+        hidden_init, key_cache_init, value_cache_init = initial_cache
+        seq_len, batch_size = observation.shape
+        
+        # Pre-allocate tensors to avoid repeated concatenations
+        device = observation.device
+        hidden_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)
+        key_cache_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)  
+        value_cache_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)
+        
+        # Initialize with provided cache
+        hidden_states[0] = hidden_init.squeeze(0)
+        key_cache_states[0] = key_cache_init.squeeze(0)
+        value_cache_states[0] = value_cache_init.squeeze(0)
+        
+        # Embed all tokens at once
+        emb = self.drop(self.encoder(observation))  # seq_len x batch_size x ninp
+        
+        # Create causal mask once for all positions
+        causal_mask = self.create_causal_mask_vectorized(seq_len, device)
+        
+        for i in range(seq_len):
+            # Current cache length (including current position)
+            cache_len = i + 1
+            
+            # Get current embeddings and hidden state
+            curr_emb = emb[i]  # batch_size x ninp
+            curr_hidden = hidden_states[i]  # batch_size x nhid
+            
+            # Query computation
+            query_input = torch.cat([curr_emb, curr_hidden], dim=-1)
+            query = self.drop(self.tanh(self.q_norm(self.q(query_input))))  # batch_size x nhid
+            
+            # Attention computation - vectorized over cache
+            current_keys = key_cache_states[:cache_len]  # cache_len x batch_size x nhid
+            current_values = value_cache_states[:cache_len]  # cache_len x batch_size x nhid
+            current_mask = causal_mask[i, :cache_len] if cache_len <= seq_len else None
+            attn, attn_weights = self.multi_head_attention(
+                query, current_keys, current_values, current_mask
+            )
             
             # Intermediate computation
             intermediate_input = torch.cat([curr_emb, query, attn, curr_hidden], dim=-1)

@@ -7,7 +7,7 @@ import datasets
 import math
 import numpy as np
 from collections import Counter
-from original_cbr import CueBasedRNNModel, OptimizedCueBasedRNNModel 
+from original_cbr import CueBasedRNNModel, OptimizedCueBasedRNNModel, OptimizedCueBasedRNNModel_MH
 # Assume CueBasedRNNModel is imported from your module
 # from your_module import CueBasedRNNModel
 
@@ -56,8 +56,7 @@ class CBRLanguageModel(pl.LightningModule):
     """
     
     def __init__(self, vocab_size, ninp=512, nhid=512, nlayers=1, 
-                 dropout=0.5, tie_weights=False, lr=1.0, weight_decay=0.0,
-                 use_aux_objective=False, aux_vocab_size=0):
+                 dropout=0.5, nheads=8, lr=1.0, weight_decay=0):
         """
         Initialize the Lightning module
         
@@ -79,12 +78,13 @@ class CBRLanguageModel(pl.LightningModule):
         self.save_hyperparameters()
         
         # Initialize the CueBasedRNNModel
-        self.model = OptimizedCueBasedRNNModel(
+        self.model = OptimizedCueBasedRNNModel_MH(
             ntoken=vocab_size,
             ninp=ninp,
             nhid=nhid, 
             nlayers=nlayers,
-            dropout=dropout
+            dropout=dropout,
+            nheads=nheads
             # tie_weights=tie_weights,
             # aux_objective=use_aux_objective,
             # nauxclasses=aux_vocab_size,
@@ -98,33 +98,8 @@ class CBRLanguageModel(pl.LightningModule):
         # Loss function
         self.criterion = nn.CrossEntropyLoss(reduction='mean')
         
-        # For auxiliary loss if needed
-        if use_aux_objective:
-            self.aux_criterion = nn.CrossEntropyLoss(reduction='mean')
-            self.aux_weight = 0.1  # Weight for auxiliary loss
         
-    # def create_causal_mask(self, seq_len, batch_size, device):
-    #     """
-    #     Create causal attention masks for the sequence
-        
-    #     Args:
-    #         seq_len: Length of sequence
-    #         batch_size: Batch size
-    #         device: Device to create mask on
-            
-    #     Returns:
-    #         Causal mask of shape [batch_size, seq_len, seq_len+1]
-    #     """
-    #     # Create causal mask: position i can only attend to positions [0, 1, ..., i]
-    #     mask = torch.full((seq_len, seq_len + 1), float('-inf'), device=device)
-        
-    #     # Fill lower triangular part with 0s (allowed positions)
-    #     for i in range(seq_len):
-    #         mask[i, :i+1] = 0.0
-            
-    #     # Expand for batch dimension
-    #     mask = mask.unsqueeze(0).expand(batch_size, -1, -1)
-    #     return mask
+  
         
     def _shared_step(self, batch, stage):
         """
@@ -290,7 +265,8 @@ def train_cbr_model():
         nlayers=1,
         dropout=0.5,
         lr=3e-4,  # High LR as in reference
-        weight_decay=0.0
+        weight_decay=0.0,
+        nheads=8
     )
     
     # if hasattr(torch, 'compile'):
