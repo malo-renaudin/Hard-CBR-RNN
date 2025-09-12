@@ -176,13 +176,14 @@ class CueBasedRNNModel(nn.Module):
         return decoded, hidden, decoded_aux, attn_log
 
     def init_cache(self, observation):
+        device = observation.device
         if len(observation.size())>1:
             bsz = observation.size(dim=-1)
         else:
             bsz = 1
         seq_len = observation.size(dim=0)
 
-        return torch.zeros(1, bsz, self.nhid).to(self.device), torch.zeros(1, bsz, self.nhid).to(self.device), torch.zeros(1, bsz, self.nhid).to(self.device)
+        return torch.zeros(1, bsz, self.nhid, device=device), torch.zeros(1, bsz, self.nhid, device=device), torch.zeros(1, bsz, self.nhid, device=device)
 
     def set_parameters(self,init_val):
         for module in [self.q, self.intermediate_h, self.final_h]:
