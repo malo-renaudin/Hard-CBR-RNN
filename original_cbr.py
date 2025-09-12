@@ -493,3 +493,106 @@ class OptimizedCueBasedRNNModel_MH(nn.Module):
         for module in [self.q, self.intermediate_h, self.final_h]:
             for weight in module.parameters():
                 weight.data.uniform_(-initrange, initrange)
+                
+                
+class CBR_RNN(nn.Module):
+    def __init__(self, ntoken, ninp, nhid, nlayers, nheads=1, dropout=0.5):
+        super().__init__()
+        self.drop = nn.Dropout(dropout)
+        self.encoder = nn.Embedding(ntoken+1, ninp)       
+        self.q = nn.Linear(ninp+nhid, nhid)
+        self.intermediate_h = nn.Linear(nhid*4, nhid*4)
+        self.final_h = nn.Linear(nhid*4, nhid*3)
+        self.decoder = nn.Linear(nhid, ntoken+1)
+        self.q_norm = nn.LayerNorm(nhid)
+        self.int_norm = nn.LayerNorm(nhid * 4)
+        self.f_norm = nn.LayerNorm(nhid * 3)            
+        
+        self.nhid = nhid
+        self.nheads = nheads
+        self.head_dim = nhid // nheads if nheads > 1 else nhid
+        self.attn_div_factor = np.sqrt(self.head_dim)
+        
+        assert nhid % nheads == 0 if nheads > 1 else True, "nhid must be divisible by nheads"
+        self.init_weights()
+
+    def init_weights(self):
+        initrange = 0.1
+        nn.init.uniform_(self.encoder.weight, -initrange, initrange)
+        nn.init.zeros_(self.decoder.bias)
+        nn.init.uniform_(self.decoder.weight, -initrange, initrange)
+
+    def forward(self, observation, initial_cache, temperature=1.0, use_gumbel=False, hard=False):
+        hidden_init, key_cache_init, value_cache_init = initial_cache
+        seq_len, batch_size = observation.shape
+        device = observation.device
+        
+        # Pre-allocate all state tensors
+        states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)
+        keys = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)  
+        values = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)
+        
+        # Initialize
+        states[0] = hidden_init.squeeze(0)
+        keys[0] = key_cache_init.squeeze(0)
+        values[0] = value_cache_init.squeeze(0)
+        
+        emb = self.drop(self.encoder(observation))
+        causal_mask = torch.triu(torch.full((seq_len, seq_len), float('-inf'), device=device), diagonal=1)
+        
+        for i in range(seq_len):
+            cache_len = i + 1
+            curr_emb, curr_hidden = emb[i], states[i]
+            
+            # Query computation
+            query = self.drop(torch.tanh(self.q_norm(self.q(torch.cat([curr_emb, curr_hidden], dim=-1)))))
+            
+            # Unified multi-head attention (single-head is just nheads=1)
+            current_keys = keys[:cache_len].transpose(0, 1)  # batch_size x cache_len x nhid
+            current_values = values[:cache_len].transpose(0, 1)  # batch_size x cache_len x nhid
+            
+            # Reshape for multi-head (works for single-head when nheads=1)
+            q_mh = query.view(batch_size, self.nheads, self.head_dim)
+            k_mh = current_keys.view(batch_size, cache_len, self.nheads, self.head_dim)
+            v_mh = current_values.view(batch_size, cache_len, self.nheads, self.head_dim)
+            
+            # Compute attention scores: batch_size x nheads x cache_len
+            attn_scores = torch.einsum('bnh,bcnh->bnc', q_mh, k_mh)
+            
+            # Apply mask and scaling
+            masked_scores = (attn_scores + causal_mask[i, :cache_len].unsqueeze(0).unsqueeze(0)) / self.attn_div_factor
+            
+            # Softmax (Gumbel or regular)
+            softmax_fn = (lambda x: F.gumbel_softmax(x, tau=temperature, hard=hard, dim=-1)) if use_gumbel else (lambda x: F.softmax(x, dim=-1))
+            attn_weights = softmax_fn(masked_scores)
+            
+            # Compute attention output and flatten: batch_size x nhid
+            attn = torch.einsum('bnc,bcnh->bnh', attn_weights, v_mh).contiguous().view(batch_size, self.nhid)
+            
+            # Process through network layers
+            intermediate = self.drop(torch.tanh(self.int_norm(
+                self.intermediate_h(torch.cat([curr_emb, query, attn, curr_hidden], dim=-1)))))
+            
+            final_output = self.drop(torch.tanh(self.f_norm(self.final_h(intermediate))))
+            key_i, value_i, hidden_i = final_output.split(self.nhid, dim=-1)
+            
+            states[i + 1] = hidden_i
+            keys[i + 1] = key_i
+            values[i + 1] = value_i
+        
+        return self.decoder(states[1:]), states
+
+    def init_cache(self, observation):
+        device = observation.device
+        bsz = observation.size(-1) if len(observation.size()) > 1 else 1
+        return tuple(torch.zeros(1, bsz, self.nhid, device=device) for _ in range(3))
+    
+    def set_parameters(self, val):
+        for module in [self.q, self.intermediate_h, self.final_h, self.encoder, self.decoder]:
+            for param in module.parameters():
+                param.data.fill_(val)
+
+    def randomize_parameters(self):
+        for module in [self.q, self.intermediate_h, self.final_h]:
+            for param in module.parameters():
+                nn.init.uniform_(param, -0.1, 0.1)
