@@ -56,7 +56,8 @@ class CBRLanguageModel(pl.LightningModule):
     """
     
     def __init__(self, vocab_size, ninp=512, nhid=512, nlayers=1, 
-                 dropout=0.5, nheads=8, lr=1.0, weight_decay=0):
+                 dropout=0.5, nheads=8, lr=1.0, weight_decay=0,
+                 use_gumbel_softmax=False, initial_temp=1.0, final_temp=0.1, temp_decay="exponential"):
         """
         Initialize the Lightning module
         
@@ -78,7 +79,7 @@ class CBRLanguageModel(pl.LightningModule):
         self.save_hyperparameters()
         
         # Initialize the CueBasedRNNModel
-        self.model = OptimizedCueBasedRNNModel_MH(
+        self.model = OptimizedCueBasedRNNModel(
             ntoken=vocab_size,
             ninp=ninp,
             nhid=nhid, 
@@ -91,6 +92,12 @@ class CBRLanguageModel(pl.LightningModule):
             # device=self.device
         )
         
+        # Gumbel softmax and temperature scheduling parameters
+        self.use_gumbel_softmax = use_gumbel_softmax
+        self.initial_temp = initial_temp if use_gumbel_softmax else None
+        self.final_temp = final_temp if use_gumbel_softmax else None
+        self.temp_decay = temp_decay if use_gumbel_softmax else None
+        
         # Training hyperparameters
         self.lr = lr
         self.weight_decay = weight_decay
@@ -98,7 +105,29 @@ class CBRLanguageModel(pl.LightningModule):
         # Loss function
         self.criterion = nn.CrossEntropyLoss(reduction='mean')
         
+    def get_current_temperature(self):
+        """Calculate current temperature based on training progress"""
+        if not self.use_gumbel_softmax:
+            return 1.0  # Default temperature for regular softmax (not used)
+            
+        if not hasattr(self.trainer, 'max_epochs') or self.trainer.max_epochs == 0:
+            return self.initial_temp
+            
+        progress = self.current_epoch / self.trainer.max_epochs
         
+        if self.temp_decay == "linear":
+            temp = self.initial_temp + (self.final_temp - self.initial_temp) * progress
+        elif self.temp_decay == "exponential":
+            temp = self.initial_temp * (self.final_temp / self.initial_temp) ** progress
+        elif self.temp_decay == "cosine":
+            # Cosine annealing - smooth decay
+            temp = self.final_temp + (self.initial_temp - self.final_temp) * \
+                   0.5 * (1 + math.cos(math.pi * progress))
+        else:
+            # Default to constant temperature
+            temp = self.initial_temp
+            
+        return max(temp, 0.1)
   
         
     def _shared_step(self, batch, stage):
@@ -122,19 +151,20 @@ class CBRLanguageModel(pl.LightningModule):
         # Initialize cache for this batch
         initial_cache = self.model.init_cache(sequences)
         
-        # Create causal masks
-        # masks = self.create_causal_mask(seq_len, batch_size, sequences.device)
+        forward_kwargs = {
+            'observation': sequences,
+            'initial_cache': initial_cache
+        }
         
+        # Add temperature and gumbel flag only if using Gumbel softmax
+        if self.use_gumbel_softmax:
+            current_temp = self.get_current_temperature()
+            forward_kwargs.update({
+                'temperature': current_temp,
+                'use_gumbel': True  # Assuming your model has this flag
+            })
         # Forward pass through model
-        output, final_hidden = self.model.forward(
-            observation=sequences,
-            initial_cache=initial_cache
-            # masks=masks,
-            # attn_softmax_scaling_factor=1.0,
-            # output_attn=False,  # Set to True if you want to analyze attention
-            # uniform_attn=False,
-            # random_attn=False
-        )
+        output, final_hidden = self.model.forward(**forward_kwargs)
         
         # Compute primary language modeling loss
         # output: [seq_len, batch_size, vocab_size]
@@ -163,9 +193,12 @@ class CBRLanguageModel(pl.LightningModule):
         self.log(f"{stage}_ppl", ppl, prog_bar=True,
                 on_step=(stage == "train"), on_epoch=True, sync_dist=True)
         
-        # if aux_loss is not None:
-        #     self.log(f"{stage}_aux_loss", aux_loss, on_epoch=True, sync_dist=True)
-        #     self.log(f"{stage}_total_loss", total_loss, on_epoch=True, sync_dist=True)
+        # Only log temperature if using Gumbel softmax
+        if self.use_gumbel_softmax:
+            current_temp = self.get_current_temperature()
+            self.log(f"{stage}_temperature", current_temp, prog_bar=(stage == "train"),
+                    on_step=(stage == "train"), on_epoch=True, sync_dist=True)
+        
         
         return total_loss
     
@@ -212,7 +245,7 @@ class CBRLanguageModel(pl.LightningModule):
             }
         }
 
-def train_cbr_model():
+def train_cbr_model(use_gumbel_softmax=False, gumbel_config=None):
     """
     Training script for the CueBasedRNNModel
     """
@@ -224,6 +257,12 @@ def train_cbr_model():
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     
+    if gumbel_config is None:
+        gumbel_config = {
+            'initial_temp': 1.0,
+            'final_temp': 0.1,
+            'temp_decay': 'exponential'
+        }
     # Load WikiText-103 dataset
     data_dir = "cbr_lightning/wikitext-103-raw"  # Adjust path as needed
     raw = datasets.load_from_disk(data_dir)
@@ -257,21 +296,27 @@ def train_cbr_model():
         num_workers=4, drop_last=True, pin_memory=True
     )
     
-    # Initialize model
-    model = CBRLanguageModel(
-        vocab_size=tokenizer.vocab_size,
-        ninp=512,
-        nhid=512,
-        nlayers=1,
-        dropout=0.5,
-        lr=3e-4,  # High LR as in reference
-        weight_decay=0.0,
-        nheads=8
-    )
+    model_kwargs = {
+        'vocab_size': tokenizer.vocab_size,
+        'ninp': 512,
+        'nhid': 512,
+        'nlayers': 1,
+        'dropout': 0.5,
+        'lr': 3e-4,
+        'weight_decay': 0.0,
+        'nheads': 8,
+        'use_gumbel_softmax': use_gumbel_softmax
+    }
     
-    # if hasattr(torch, 'compile'):
-    #     print("Compiling model...")
-    #     model.model = torch.compile(model.model, mode='default')
+    # Add Gumbel softmax parameters only if needed
+    if use_gumbel_softmax:
+        model_kwargs.update(gumbel_config)
+        print(f"Training with Gumbel softmax: {gumbel_config}")
+    else:
+        print("Training with regular softmax")
+    
+    model = CBRLanguageModel(**model_kwargs)
+    
     
     # Setup trainer
     trainer = pl.Trainer(
@@ -298,4 +343,4 @@ def train_cbr_model():
 
 
 if __name__ == "__main__":
-    model, tokenizer = train_cbr_model()
+    model, tokenizer = train_cbr_model(use_gumbel_softmax=True)

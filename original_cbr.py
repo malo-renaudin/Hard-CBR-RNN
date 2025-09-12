@@ -238,7 +238,7 @@ class OptimizedCueBasedRNNModel(nn.Module):
         mask = torch.triu(torch.full((seq_len, seq_len), float('-inf'), device=device), diagonal=1)
         return mask
 
-    def forward(self, observation, initial_cache):
+    def forward(self, observation, initial_cache, temperature=1.0, use_gumbel=False, hard=False):
         hidden_init, key_cache_init, value_cache_init = initial_cache
         seq_len, batch_size = observation.shape
         
@@ -284,7 +284,17 @@ class OptimizedCueBasedRNNModel(nn.Module):
             # Apply causal mask and scaling
             masked_scores = attn_scores + causal_mask[i, :cache_len].unsqueeze(0)
             masked_scores = masked_scores / self.attn_div_factor
-            attn_weights = F.softmax(masked_scores, dim=-1)  # batch_size x cache_len
+            # Conditional softmax: Gumbel softmax or regular softmax
+            if use_gumbel:
+                attn_weights = F.gumbel_softmax(
+                    masked_scores, 
+                    tau=temperature,
+                    hard=hard,
+                    dim=-1
+                )  # batch_size x cache_len
+            else:
+                attn_weights = F.softmax(masked_scores, dim=-1)  # batch_size x cache_len
+            
             
             # Compute attention output
             attn = torch.bmm(
