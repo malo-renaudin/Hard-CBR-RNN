@@ -359,15 +359,19 @@ class OptimizedCueBasedRNNModel_MH(nn.Module):
         self.d_k = nhid // nheads
         self.attn_scale = 1.0 / math.sqrt(self.d_k)
         
-        self.query_projections = nn.ModuleList([
-            nn.Linear(nhid, self.d_k, bias=False) for _ in range(nheads)
-        ])
-        self.key_projections = nn.ModuleList([
-            nn.Linear(nhid, self.d_k, bias=False) for _ in range(nheads)
-        ])
-        self.value_projections = nn.ModuleList([
-            nn.Linear(nhid, self.d_k, bias=False) for _ in range(nheads)
-        ])
+        # self.query_projections = nn.ModuleList([
+        #     nn.Linear(nhid, self.d_k, bias=False) for _ in range(nheads)
+        # ])
+        # self.key_projections = nn.ModuleList([
+        #     nn.Linear(nhid, self.d_k, bias=False) for _ in range(nheads)
+        # ])
+        # self.value_projections = nn.ModuleList([
+        #     nn.Linear(nhid, self.d_k, bias=False) for _ in range(nheads)
+        # ])
+        
+        self.query_projection = nn.Linear(nhid, nhid, bias=False)  # All heads together
+        self.key_projection = nn.Linear(nhid, nhid, bias=False)
+        self.value_projection = nn.Linear(nhid, nhid, bias=False)
         
         # Output projection for multi-head attention
         self.output_projection = nn.Linear(nhid, nhid, bias=False)
@@ -403,7 +407,7 @@ class OptimizedCueBasedRNNModel_MH(nn.Module):
 
     def multi_head_attention(self, query, keys, values):
         """
-        Multi-head attention computation for sequential processing
+        Fused multi-head attention computation for sequential processing
         
         Args:
             query: [batch_size, nhid] - current query state
@@ -417,50 +421,43 @@ class OptimizedCueBasedRNNModel_MH(nn.Module):
         batch_size = query.shape[0]
         cache_len = keys.shape[0]
         
-        all_attention_weights = []
-        head_outputs = []
+        # Project all at once using fused matrices
+        q_all = self.query_projection(query)  # [batch_size, nhid]
+        k_all = self.key_projection(keys)     # [cache_len, batch_size, nhid]
+        v_all = self.value_projection(values) # [cache_len, batch_size, nhid]
         
-        # Process each head separately
-        for i in range(self.nheads):
-            # Project query for this head
-            q_i = self.query_projections[i](query)  # [batch_size, d_k]
-            
-            # Project all keys and values for this head
-            k_i = self.key_projections[i](keys)     # [cache_len, batch_size, d_k]
-            v_i = self.value_projections[i](values) # [cache_len, batch_size, d_k]
-            
-            # Compute attention scores: query vs all keys
-            # q_i: [batch_size, d_k], k_i: [cache_len, batch_size, d_k]
-            scores = torch.einsum('bd,tbd->bt', q_i, k_i) * self.attn_scale
-            # scores: [batch_size, cache_len]
-            
-            if cache_len > 1:
-                # Mask out the last position (current position i) so we only attend to previous positions
-                scores[:, -1] = float('-inf')  # Mask the current position
-            
-            
-            # Apply softmax to get attention weights
-            attention_weights = F.softmax(scores, dim=-1)  # [batch_size, cache_len]
-            attention_weights = self.drop(attention_weights)
-            
-            # Apply attention to values
-            # attention_weights: [batch_size, cache_len], v_i: [cache_len, batch_size, d_k]
-            head_output = torch.einsum('bt,tbd->bd', attention_weights, v_i)
-            # head_output: [batch_size, d_k]
-            
-            head_outputs.append(head_output)
-            all_attention_weights.append(attention_weights)
+        # Reshape for multi-head attention - more efficient memory layout
+        q_heads = q_all.view(batch_size, self.nheads, self.d_k)  # [batch_size, nheads, d_k]
+        k_heads = k_all.view(cache_len, batch_size, self.nheads, self.d_k)  # [cache_len, batch_size, nheads, d_k]
+        v_heads = v_all.view(cache_len, batch_size, self.nheads, self.d_k)  # [cache_len, batch_size, nheads, d_k]
         
-        # Concatenate all head outputs
-        concatenated = torch.cat(head_outputs, dim=-1)  # [batch_size, nhid]
+        # Transpose for efficient batch matrix multiply
+        k_heads = k_heads.permute(1, 2, 0, 3)  # [batch_size, nheads, cache_len, d_k]
+        v_heads = v_heads.permute(1, 2, 0, 3)  # [batch_size, nheads, cache_len, d_k]
+        q_heads = q_heads.unsqueeze(-1)        # [batch_size, nheads, d_k, 1]
+        
+        # Compute attention scores for all heads at once
+        scores = torch.matmul(k_heads, q_heads).squeeze(-1) * self.attn_scale  # [batch_size, nheads, cache_len]
+        
+        if cache_len > 1:
+            # Mask out the last position (current position) so we only attend to previous positions
+            scores[:, :, -1] = float('-inf')  # Mask the current position for all heads
+        
+        # Apply softmax to get attention weights
+        attention_weights = F.softmax(scores, dim=-1)  # [batch_size, nheads, cache_len]
+        attention_weights = self.drop(attention_weights)
+        
+        # Apply attention to values for all heads at once
+        attention_weights_expanded = attention_weights.unsqueeze(-1)  # [batch_size, nheads, cache_len, 1]
+        attended_heads = torch.sum(v_heads * attention_weights_expanded, dim=2)  # [batch_size, nheads, d_k]
+        
+        # Concatenate all heads
+        attended = attended_heads.contiguous().view(batch_size, self.nhid)  # [batch_size, nhid]
         
         # Final linear projection
-        attended = self.output_projection(concatenated)  # [batch_size, nhid]
+        attended = self.output_projection(attended)  # [batch_size, nhid]
         
-        # Stack attention weights for analysis
-        attn_weights = torch.stack(all_attention_weights, dim=1)  # [batch_size, nheads, cache_len]
-        
-        return attended, attn_weights
+        return attended, attention_weights
     
     def forward(self, observation, initial_cache):
         """

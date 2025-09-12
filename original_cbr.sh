@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=optimized_cbr_mh
+#SBATCH --job-name=optimized_cbr_fused_mh
 #SBATCH --output=logs/optimized_cbr_%j.log
 #SBATCH --error=logs/optimized_cbr_%j.err
 #SBATCH --ntasks=1
