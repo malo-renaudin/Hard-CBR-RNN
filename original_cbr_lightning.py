@@ -295,13 +295,13 @@ def train_cbr_model():
         weight_decay=0.0
     )
     
-    if hasattr(torch, 'compile'):
-        print("Compiling model...")
-        model.model = torch.compile(model.model, mode='default')
+    # if hasattr(torch, 'compile'):
+    #     print("Compiling model...")
+    #     model.model = torch.compile(model.model, mode='default')
     
     # Setup trainer
     trainer = pl.Trainer(
-        max_epochs=100,
+        max_epochs=5,
         gradient_clip_val=0.25,  # Match reference implementation
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         devices=1,
