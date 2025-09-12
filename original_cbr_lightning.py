@@ -7,7 +7,7 @@ import datasets
 import math
 import numpy as np
 from collections import Counter
-from original_cbr import CueBasedRNNModel, OptimizedCueBasedRNNModel, OptimizedCueBasedRNNModel_MH
+from original_cbr import CueBasedRNNModel, OptimizedCueBasedRNNModel, OptimizedCueBasedRNNModel_MH, CBR_RNN
 # Assume CueBasedRNNModel is imported from your module
 # from your_module import CueBasedRNNModel
 
@@ -79,17 +79,13 @@ class CBRLanguageModel(pl.LightningModule):
         self.save_hyperparameters()
         
         # Initialize the CueBasedRNNModel
-        self.model = OptimizedCueBasedRNNModel(
+        self.model = CBR_RNN(
             ntoken=vocab_size,
             ninp=ninp,
             nhid=nhid, 
             nlayers=nlayers,
-            dropout=dropout
-            # nheads=nheads
-            # tie_weights=tie_weights,
-            # aux_objective=use_aux_objective,
-            # nauxclasses=aux_vocab_size,
-            # device=self.device
+            dropout=dropout,
+            nheads=nheads
         )
         
         # Gumbel softmax and temperature scheduling parameters
@@ -174,15 +170,7 @@ class CBRLanguageModel(pl.LightningModule):
         
         lm_loss = self.criterion(output_flat, targets_flat)
         total_loss = lm_loss
-        
-        # # Compute auxiliary loss if enabled
-        # aux_loss = None
-        # if self.hparams.use_aux_objective and aux_output is not None:
-        #     aux_output_flat = aux_output.reshape(-1, aux_output.size(-1))
-        #     # Note: You would need auxiliary targets for this to work
-        #     # aux_loss = self.aux_criterion(aux_output_flat, aux_targets_flat)
-        #     # total_loss = lm_loss + self.aux_weight * aux_loss
-        #     pass
+      
         
         # Compute perplexity for logging
         ppl = torch.exp(lm_loss)
@@ -245,7 +233,7 @@ class CBRLanguageModel(pl.LightningModule):
             }
         }
 
-def train_cbr_model(use_gumbel_softmax=False, gumbel_config=None):
+def train_cbr_model(use_gumbel_softmax=False, gumbel_config=None, model_kwargs=model_kwargs):
     """
     Training script for the CueBasedRNNModel
     """
@@ -296,17 +284,21 @@ def train_cbr_model(use_gumbel_softmax=False, gumbel_config=None):
         num_workers=4, drop_last=True, pin_memory=True
     )
     
-    model_kwargs = {
-        'vocab_size': tokenizer.vocab_size,
-        'ninp': 512,
-        'nhid': 512,
-        'nlayers': 1,
-        'dropout': 0.5,
-        'lr': 3e-4,
-        'weight_decay': 0.0,
-        # 'nheads': 8,
-        'use_gumbel_softmax': use_gumbel_softmax
-    }
+    if model_kwargs is None:
+        model_kwargs = {
+            'vocab_size': tokenizer.vocab_size,
+            'ninp': 512,
+            'nhid': 512,
+            'nlayers': 1,
+            'dropout': 0.5,
+            'lr': 3e-4,
+            'weight_decay': 0.0,
+            'nheads': 8,
+        }
+    else:
+        # Make sure vocab_size is set
+        model_kwargs['vocab_size'] = tokenizer.vocab_size
+    
     
     # Add Gumbel softmax parameters only if needed
     if use_gumbel_softmax:
@@ -343,4 +335,14 @@ def train_cbr_model(use_gumbel_softmax=False, gumbel_config=None):
 
 
 if __name__ == "__main__":
+    
+    model_kwargs = {
+        'ninp': 512,
+        'nhid': 512,
+        'nlayers': 1,
+        'dropout': 0.5,
+        'lr': 3e-4,
+        'weight_decay': 0.0,
+        'nheads': 8,
+    }
     model, tokenizer = train_cbr_model(use_gumbel_softmax=True)
