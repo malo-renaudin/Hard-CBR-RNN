@@ -342,7 +342,7 @@ import torch.nn.functional as F
 import math
 
 class OptimizedCueBasedRNNModel_MH(nn.Module):
-    def __init__(self, ntoken, ninp, nhid, nlayers, dropout=0.5, nhead=8):
+    def __init__(self, ntoken, ninp, nhid, nlayers, dropout=0.5, nheads=8):
         super().__init__()
         self.tanh = nn.Tanh()
         self.drop = nn.Dropout(dropout)
@@ -355,9 +355,9 @@ class OptimizedCueBasedRNNModel_MH(nn.Module):
         self.int_norm = torch.nn.LayerNorm(nhid * 4)
         self.f_norm = torch.nn.LayerNorm(nhid * 3)            
         self.nhid = nhid
-        self.nhead = nhead
-        self.head_dim = nhid // nhead
-        assert nhid % nhead == 0, "nhid must be divisible by nhead"
+        self.nheads = nheads
+        self.head_dim = nhid // nheads
+        assert nhid % nheads == 0, "nhid must be divisible by nhead"
         self.attn_div_factor = np.sqrt(self.head_dim)
         
         self.init_weights()
