@@ -103,28 +103,28 @@ class CBRLanguageModel(pl.LightningModule):
             self.aux_criterion = nn.CrossEntropyLoss(reduction='mean')
             self.aux_weight = 0.1  # Weight for auxiliary loss
         
-    def create_causal_mask(self, seq_len, batch_size, device):
-        """
-        Create causal attention masks for the sequence
+    # def create_causal_mask(self, seq_len, batch_size, device):
+    #     """
+    #     Create causal attention masks for the sequence
         
-        Args:
-            seq_len: Length of sequence
-            batch_size: Batch size
-            device: Device to create mask on
+    #     Args:
+    #         seq_len: Length of sequence
+    #         batch_size: Batch size
+    #         device: Device to create mask on
             
-        Returns:
-            Causal mask of shape [batch_size, seq_len, seq_len+1]
-        """
-        # Create causal mask: position i can only attend to positions [0, 1, ..., i]
-        mask = torch.full((seq_len, seq_len + 1), float('-inf'), device=device)
+    #     Returns:
+    #         Causal mask of shape [batch_size, seq_len, seq_len+1]
+    #     """
+    #     # Create causal mask: position i can only attend to positions [0, 1, ..., i]
+    #     mask = torch.full((seq_len, seq_len + 1), float('-inf'), device=device)
         
-        # Fill lower triangular part with 0s (allowed positions)
-        for i in range(seq_len):
-            mask[i, :i+1] = 0.0
+    #     # Fill lower triangular part with 0s (allowed positions)
+    #     for i in range(seq_len):
+    #         mask[i, :i+1] = 0.0
             
-        # Expand for batch dimension
-        mask = mask.unsqueeze(0).expand(batch_size, -1, -1)
-        return mask
+    #     # Expand for batch dimension
+    #     mask = mask.unsqueeze(0).expand(batch_size, -1, -1)
+    #     return mask
         
     def _shared_step(self, batch, stage):
         """
@@ -148,17 +148,17 @@ class CBRLanguageModel(pl.LightningModule):
         initial_cache = self.model.init_cache(sequences)
         
         # Create causal masks
-        masks = self.create_causal_mask(seq_len, batch_size, sequences.device)
+        # masks = self.create_causal_mask(seq_len, batch_size, sequences.device)
         
         # Forward pass through model
         output, final_hidden, aux_output, attn_log = self.model.forward(
             observation=sequences,
-            initial_cache=initial_cache,
-            masks=masks,
-            attn_softmax_scaling_factor=1.0,
-            output_attn=False,  # Set to True if you want to analyze attention
-            uniform_attn=False,
-            random_attn=False
+            initial_cache=initial_cache
+            # masks=masks,
+            # attn_softmax_scaling_factor=1.0,
+            # output_attn=False,  # Set to True if you want to analyze attention
+            # uniform_attn=False,
+            # random_attn=False
         )
         
         # Compute primary language modeling loss
@@ -170,14 +170,14 @@ class CBRLanguageModel(pl.LightningModule):
         lm_loss = self.criterion(output_flat, targets_flat)
         total_loss = lm_loss
         
-        # Compute auxiliary loss if enabled
-        aux_loss = None
-        if self.hparams.use_aux_objective and aux_output is not None:
-            aux_output_flat = aux_output.reshape(-1, aux_output.size(-1))
-            # Note: You would need auxiliary targets for this to work
-            # aux_loss = self.aux_criterion(aux_output_flat, aux_targets_flat)
-            # total_loss = lm_loss + self.aux_weight * aux_loss
-            pass
+        # # Compute auxiliary loss if enabled
+        # aux_loss = None
+        # if self.hparams.use_aux_objective and aux_output is not None:
+        #     aux_output_flat = aux_output.reshape(-1, aux_output.size(-1))
+        #     # Note: You would need auxiliary targets for this to work
+        #     # aux_loss = self.aux_criterion(aux_output_flat, aux_targets_flat)
+        #     # total_loss = lm_loss + self.aux_weight * aux_loss
+        #     pass
         
         # Compute perplexity for logging
         ppl = torch.exp(lm_loss)
@@ -188,9 +188,9 @@ class CBRLanguageModel(pl.LightningModule):
         self.log(f"{stage}_ppl", ppl, prog_bar=True,
                 on_step=(stage == "train"), on_epoch=True, sync_dist=True)
         
-        if aux_loss is not None:
-            self.log(f"{stage}_aux_loss", aux_loss, on_epoch=True, sync_dist=True)
-            self.log(f"{stage}_total_loss", total_loss, on_epoch=True, sync_dist=True)
+        # if aux_loss is not None:
+        #     self.log(f"{stage}_aux_loss", aux_loss, on_epoch=True, sync_dist=True)
+        #     self.log(f"{stage}_total_loss", total_loss, on_epoch=True, sync_dist=True)
         
         return total_loss
     
@@ -245,7 +245,11 @@ def train_cbr_model():
     """
     # Set random seeds for reproducibility
     pl.seed_everything(42)
-    torch.set_float32_matmul_precision('medium')
+    torch.set_float32_matmul_precision('high')
+    
+    torch.backends.cudnn.benchmark = True  # Optimize for fixed input sizes
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     
     # Load WikiText-103 dataset
     data_dir = "cbr_lightning/wikitext-103-raw"  # Adjust path as needed
@@ -287,10 +291,13 @@ def train_cbr_model():
         nhid=512,
         nlayers=1,
         dropout=0.5,
-        tie_weights=False,
         lr=1.0,  # High LR as in reference
         weight_decay=0.0
     )
+    
+    if hasattr(torch, 'compile'):
+        print("Compiling model...")
+        model.model = torch.compile(model.model, mode='default')
     
     # Setup trainer
     trainer = pl.Trainer(
@@ -303,7 +310,9 @@ def train_cbr_model():
         val_check_interval=1.0,
         enable_checkpointing=True,
         enable_progress_bar=True,
-        enable_model_summary=True
+        enable_model_summary=True,
+        deterministic=False,  # Allow non-deterministic ops for speed
+        benchmark=True, 
     )
     
     # Train the model
