@@ -342,134 +342,54 @@ import torch.nn.functional as F
 import math
 
 class OptimizedCueBasedRNNModel_MH(nn.Module):
-    def __init__(self, ntoken, ninp, nhid, nlayers, nheads, dropout=0.5):
+    def __init__(self, ntoken, ninp, nhid, nlayers, dropout=0.5, nhead=8):
         super().__init__()
-        
-        assert nhid % nheads == 0, f"nhid ({nhid}) must be divisible by nheads ({nheads})"
-
         self.tanh = nn.Tanh()
         self.drop = nn.Dropout(dropout)
-        self.encoder = nn.Embedding(ntoken + 1, ninp)
-        
-        # Query projection for current state
-        self.q = nn.Linear(ninp + nhid, nhid)
-        
-        # Multi-head attention projections - separate for each head
-        self.nheads = nheads
-        self.d_k = nhid // nheads
-        self.attn_scale = 1.0 / math.sqrt(self.d_k)
-        
-        # self.query_projections = nn.ModuleList([
-        #     nn.Linear(nhid, self.d_k, bias=False) for _ in range(nheads)
-        # ])
-        # self.key_projections = nn.ModuleList([
-        #     nn.Linear(nhid, self.d_k, bias=False) for _ in range(nheads)
-        # ])
-        # self.value_projections = nn.ModuleList([
-        #     nn.Linear(nhid, self.d_k, bias=False) for _ in range(nheads)
-        # ])
-        
-        self.query_projection = nn.Linear(nhid, nhid, bias=False)  # All heads together
-        self.key_projection = nn.Linear(nhid, nhid, bias=False)
-        self.value_projection = nn.Linear(nhid, nhid, bias=False)
-        
-        # Output projection for multi-head attention
-        self.output_projection = nn.Linear(nhid, nhid, bias=False)
-        
-        # RNN components
-        self.intermediate_h = nn.Linear(nhid * 4, nhid * 4)  # emb + query + attn + hidden
-        self.final_h = nn.Linear(nhid * 4, nhid * 3)  # outputs: key, value, hidden
-        
-        # Decoder
-        self.decoder = nn.Linear(nhid, ntoken + 1)
-        
-        # Layer normalization
-        self.q_norm = nn.LayerNorm(nhid)
-        self.int_norm = nn.LayerNorm(nhid * 4)
-        self.f_norm = nn.LayerNorm(nhid * 3)
-        
+        self.encoder = nn.Embedding(ntoken+1, ninp)       
+        self.q = nn.Linear(ninp+nhid, nhid)
+        self.intermediate_h = nn.Linear(nhid*4, nhid*4)
+        self.final_h = nn.Linear(nhid*4, nhid*3)
+        self.decoder = nn.Linear(nhid, ntoken+1)
+        self.q_norm = torch.nn.LayerNorm(nhid)
+        self.int_norm = torch.nn.LayerNorm(nhid * 4)
+        self.f_norm = torch.nn.LayerNorm(nhid * 3)            
         self.nhid = nhid
-        self.ninp = ninp
+        self.nhead = nhead
+        self.head_dim = nhid // nhead
+        assert nhid % nhead == 0, "nhid must be divisible by nhead"
+        self.attn_div_factor = np.sqrt(self.head_dim)
         
         self.init_weights()
 
     def init_weights(self):
-        """Initialize encoder and decoder weights"""
+        """ Initialize encoder and decoder weights """
         initrange = 0.1
         self.encoder.weight.data.uniform_(-initrange, initrange)
         self.decoder.bias.data.fill_(0)
         self.decoder.weight.data.uniform_(-initrange, initrange)
-        
-        # Initialize attention projections
-        for module in self.query_projections + self.key_projections + self.value_projections:
-            nn.init.xavier_uniform_(module.weight)
-        nn.init.xavier_uniform_(self.output_projection.weight)
 
-    def multi_head_attention(self, query, keys, values):
-        """
-        Fused multi-head attention computation for sequential processing
-        
-        Args:
-            query: [batch_size, nhid] - current query state
-            keys: [cache_len, batch_size, nhid] - all previous keys including current
-            values: [cache_len, batch_size, nhid] - all previous values including current
-        
-        Returns:
-            attended: [batch_size, nhid] - attended representation
-            attn_weights: [batch_size, nheads, cache_len] - attention weights per head
-        """
-        batch_size = query.shape[0]
-        cache_len = keys.shape[0]
-        
-        # Project all at once using fused matrices
-        q_all = self.query_projection(query)  # [batch_size, nhid]
-        k_all = self.key_projection(keys)     # [cache_len, batch_size, nhid]
-        v_all = self.value_projection(values) # [cache_len, batch_size, nhid]
-        
-        # Reshape for multi-head attention - more efficient memory layout
-        q_heads = q_all.view(batch_size, self.nheads, self.d_k)  # [batch_size, nheads, d_k]
-        k_heads = k_all.view(cache_len, batch_size, self.nheads, self.d_k)  # [cache_len, batch_size, nheads, d_k]
-        v_heads = v_all.view(cache_len, batch_size, self.nheads, self.d_k)  # [cache_len, batch_size, nheads, d_k]
-        
-        # Transpose for efficient batch matrix multiply
-        k_heads = k_heads.permute(1, 2, 0, 3)  # [batch_size, nheads, cache_len, d_k]
-        v_heads = v_heads.permute(1, 2, 0, 3)  # [batch_size, nheads, cache_len, d_k]
-        q_heads = q_heads.unsqueeze(-1)        # [batch_size, nheads, d_k, 1]
-        
-        # Compute attention scores for all heads at once
-        scores = torch.matmul(k_heads, q_heads).squeeze(-1) * self.attn_scale  # [batch_size, nheads, cache_len]
-        
-        if cache_len > 1:
-            # Mask out the last position (current position) so we only attend to previous positions
-            scores[:, :, -1] = float('-inf')  # Mask the current position for all heads
-        
-        # Apply softmax to get attention weights
-        attention_weights = F.softmax(scores, dim=-1)  # [batch_size, nheads, cache_len]
-        attention_weights = self.drop(attention_weights)
-        
-        # Apply attention to values for all heads at once
-        attention_weights_expanded = attention_weights.unsqueeze(-1)  # [batch_size, nheads, cache_len, 1]
-        attended_heads = torch.sum(v_heads * attention_weights_expanded, dim=2)  # [batch_size, nheads, d_k]
-        
-        # Concatenate all heads
-        attended = attended_heads.contiguous().view(batch_size, self.nhid)  # [batch_size, nhid]
-        
-        # Final linear projection
-        attended = self.output_projection(attended)  # [batch_size, nhid]
-        
-        return attended, attention_weights
-    
+    def random_parameters(self):
+        """ Randomly initialize all RNN parameters but not the encoder or decoder """
+        initrange = 0.1
+        for module in [self.q, self.intermediate_h, self.final_h]:
+            for weight in module.parameters():
+                weight.data.uniform_(-initrange, initrange)
+
+    def create_causal_mask_vectorized(self, seq_len, device):
+        """Create causal mask for all positions at once"""
+        # Create a upper triangular mask for all positions
+        mask = torch.triu(torch.full((seq_len, seq_len), float('-inf'), device=device), diagonal=1)
+        return mask
+
     def forward(self, observation, initial_cache):
-        """
-        Sequential forward pass maintaining CBR-RNN structure
-        """
         hidden_init, key_cache_init, value_cache_init = initial_cache
         seq_len, batch_size = observation.shape
-        device = observation.device
         
-        # Pre-allocate tensors
+        # Pre-allocate tensors to avoid repeated concatenations
+        device = observation.device
         hidden_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)
-        key_cache_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)
+        key_cache_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)  
         value_cache_states = torch.zeros(seq_len + 1, batch_size, self.nhid, device=device)
         
         # Initialize with provided cache
@@ -478,60 +398,69 @@ class OptimizedCueBasedRNNModel_MH(nn.Module):
         value_cache_states[0] = value_cache_init.squeeze(0)
         
         # Embed all tokens at once
-        emb = self.drop(self.encoder(observation))  # [seq_len, batch_size, ninp]
+        emb = self.drop(self.encoder(observation))  # seq_len x batch_size x ninp
         
-        # Sequential processing - this is the key CBR-RNN characteristic
+        # Create causal mask once for all positions
+        causal_mask = self.create_causal_mask_vectorized(seq_len, device)
+        
         for i in range(seq_len):
-            # Current cache length (including current position after we add to cache)
+            # Current cache length (including current position)
             cache_len = i + 1
             
-            # Get current embeddings and previous hidden state
-            curr_emb = emb[i]  # [batch_size, ninp]
-            prev_hidden = hidden_states[i]  # [batch_size, nhid]
+            # Get current embeddings and hidden state
+            curr_emb = emb[i]  # batch_size x ninp
+            curr_hidden = hidden_states[i]  # batch_size x nhid
             
-            # 1. QUERY: Compute query from current input and previous hidden state
-            query_input = torch.cat([curr_emb, prev_hidden], dim=-1)
-            query = self.drop(self.tanh(self.q_norm(self.q(query_input))))  # [batch_size, nhid]
+            # Query computation
+            query_input = torch.cat([curr_emb, curr_hidden], dim=-1)
+            query = self.drop(self.tanh(self.q_norm(self.q(query_input))))  # batch_size x nhid
             
-            # 2. UPDATE CACHE: Add current query as key/value to cache
-            key_cache_states[cache_len - 1] = query  # Use query as both key and value initially
-            value_cache_states[cache_len - 1] = query
+            # Multi-head attention computation
+            current_keys = key_cache_states[:cache_len]  # cache_len x batch_size x nhid
+            current_values = value_cache_states[:cache_len]  # cache_len x batch_size x nhid
             
-            # 3. ATTENTION: Attend to all previous states (including current)
-            current_keys = key_cache_states[:cache_len]    # [cache_len, batch_size, nhid]
-            current_values = value_cache_states[:cache_len] # [cache_len, batch_size, nhid]
+            # Reshape for multi-head attention
+            # query: batch_size x nhead x head_dim
+            query_mh = query.view(batch_size, self.nhead, self.head_dim)
+            # keys: cache_len x batch_size x nhead x head_dim
+            keys_mh = current_keys.view(cache_len, batch_size, self.nhead, self.head_dim)
+            # values: cache_len x batch_size x nhead x head_dim  
+            values_mh = current_values.view(cache_len, batch_size, self.nhead, self.head_dim)
             
-            attn, attn_weights = self.multi_head_attention(query, current_keys, current_values)
+            # Compute attention scores for each head: batch_size x nhead x cache_len
+            attn_scores = torch.einsum('bnh,cbnh->bnc', query_mh, keys_mh)
             
-            # 4. INTERMEDIATE: Combine all information
-            intermediate_input = torch.cat([curr_emb, query, attn, prev_hidden], dim=-1)
+            # Apply causal mask and scaling
+            masked_scores = attn_scores + causal_mask[i, :cache_len].unsqueeze(0).unsqueeze(0)
+            masked_scores = masked_scores / self.attn_div_factor
+            attn_weights = F.softmax(masked_scores, dim=-1)  # batch_size x nhead x cache_len
+            
+            # Compute attention output for each head: batch_size x nhead x head_dim
+            attn_heads = torch.einsum('bnc,cbnh->bnh', attn_weights, values_mh)
+            
+            # Concatenate heads: batch_size x nhid
+            attn = attn_heads.contiguous().view(batch_size, self.nhid)
+            
+            # Intermediate computation
+            intermediate_input = torch.cat([curr_emb, query, attn, curr_hidden], dim=-1)
             intermediate = self.drop(self.tanh(self.int_norm(self.intermediate_h(intermediate_input))))
             
-            # 5. FINAL: Compute final outputs
+            # Final computation and splitting
             final_output = self.drop(self.tanh(self.f_norm(self.final_h(intermediate))))
-            key_final, value_final, hidden_final = final_output.split(self.nhid, dim=-1)
+            key_i, value_i, hidden_i = final_output.split(self.nhid, dim=-1)
             
-            # 6. UPDATE: Store final states
-            hidden_states[i + 1] = hidden_final
-            # Update cache with refined key/value representations
-            key_cache_states[i + 1] = key_final
-            value_cache_states[i + 1] = value_final
+            # Store in pre-allocated tensors
+            hidden_states[i + 1] = hidden_i
+            key_cache_states[i + 1] = key_i
+            value_cache_states[i + 1] = value_i
+            
+        # Output processing
+        output = hidden_states[1:]  # Remove initial state
+        decoded = self.decoder(output)
         
-        # Output processing (exclude initial hidden state)
-        output = hidden_states[1:]  # [seq_len, batch_size, nhid]
-        decoded = self.decoder(output)  # [seq_len, batch_size, ntoken + 1]
-        
-        # Return final cache states
-        final_cache = (
-            hidden_states[-1:],      # Last hidden state
-            key_cache_states[-1:],   # Last key state  
-            value_cache_states[-1:]  # Last value state
-        )
-        
-        return decoded, final_cache
+        return decoded, hidden_states
 
     def init_cache(self, observation):
-        """Initialize empty cache"""
         device = observation.device
         if len(observation.size()) > 1:
             bsz = observation.size(dim=-1)
@@ -543,22 +472,13 @@ class OptimizedCueBasedRNNModel_MH(nn.Module):
                 torch.zeros(1, bsz, self.nhid, device=device))
 
     def set_parameters(self, init_val):
-        """Set all parameters to a specific value"""
         for module in [self.q, self.intermediate_h, self.final_h]:
             for weight in module.parameters():
                 weight.data.fill_(init_val)
         self.encoder.weight.data.fill_(init_val)
         self.decoder.weight.data.fill_(init_val)
-        
-        # Set attention parameters
-        for module_list in [self.query_projections, self.key_projections, self.value_projections]:
-            for module in module_list:
-                module.weight.data.fill_(init_val)
-        self.output_projection.weight.data.fill_(init_val)
 
     def randomize_parameters(self):
-        """Randomly initialize parameters"""
-        self.init_weights()
         initrange = 0.1
         for module in [self.q, self.intermediate_h, self.final_h]:
             for weight in module.parameters():
