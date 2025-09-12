@@ -3,6 +3,7 @@ import numpy as np
 import torch.nn as nn
 import torch
 import gc
+import torch.nn.functional as F
 
 class CueBasedRNNModel(nn.Module):
     def __init__(self, ntoken, ninp, nhid, nlayers,
