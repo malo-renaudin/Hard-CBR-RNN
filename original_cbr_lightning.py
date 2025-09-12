@@ -225,9 +225,8 @@ class CBRLanguageModel(pl.LightningModule):
             optimizer, 
             mode='min',
             factor=0.1,
-            patience=2,
-            verbose=True
-        )
+            patience=2
+            )
         
         return {
             "optimizer": optimizer,
