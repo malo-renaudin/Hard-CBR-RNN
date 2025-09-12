@@ -206,38 +206,36 @@ class CBRLanguageModel(pl.LightningModule):
         """Test step"""
         return self._shared_step(batch, "test")
     
-    def configure_optimizers(self):
-        """
-        Configure optimizer and learning rate scheduler
-        
-        Uses SGD with momentum as in the reference training code
-        """
-        optimizer = torch.optim.SGD(
-            self.parameters(),
-            lr=self.lr,
-            momentum=0.9,
-            nesterov=True,
-            weight_decay=self.weight_decay
-        )
-        
-        # Learning rate scheduler: reduce on plateau
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, 
-            mode='min',
-            factor=0.1,
-            patience=2
-            )
-        
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss",
-                "interval": "epoch",
-                "frequency": 1
-            }
+def configure_optimizers(self):
+    """
+    Simple but effective optimizer for language modeling
+    AdamW with cosine scheduling - proven to work well
+    """
+    # AdamW is the gold standard for transformers/language models
+    optimizer = torch.optim.AdamW(
+        self.parameters(),
+        lr=self.lr,
+        betas=(0.9, 0.999),  # Standard values work well
+        eps=1e-8,
+        weight_decay=self.weight_decay,
+        amsgrad=False
+    )
+    
+    # Cosine annealing - smooth learning rate decay
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=self.trainer.max_epochs,
+        eta_min=self.lr * 0.01  # End at 1% of starting LR
+    )
+    
+    return {
+        "optimizer": optimizer,
+        "lr_scheduler": {
+            "scheduler": scheduler,
+            "interval": "epoch",
+            "frequency": 1
         }
-
+    }
 
 def train_cbr_model():
     """
@@ -291,7 +289,7 @@ def train_cbr_model():
         nhid=512,
         nlayers=1,
         dropout=0.5,
-        lr=1.0,  # High LR as in reference
+        lr=3e-4,  # High LR as in reference
         weight_decay=0.0
     )
     
