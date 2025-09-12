@@ -434,12 +434,10 @@ class OptimizedCueBasedRNNModel_MH(nn.Module):
             scores = torch.einsum('bd,tbd->bt', q_i, k_i) * self.attn_scale
             # scores: [batch_size, cache_len]
             
-            # Apply causal masking (can only attend to current and previous positions)
-            # This is already enforced by our sequential processing, but we can add explicit masking
-            causal_mask = torch.triu(torch.full((cache_len, cache_len), float('-inf'), device=query.device), diagonal=1)
-            # Only apply mask to the last position (current query position)
             if cache_len > 1:
-                scores[:, -1:] = scores[:, -1:] + causal_mask[-1:, :cache_len]
+                # Mask out the last position (current position i) so we only attend to previous positions
+                scores[:, -1] = float('-inf')  # Mask the current position
+            
             
             # Apply softmax to get attention weights
             attention_weights = F.softmax(scores, dim=-1)  # [batch_size, cache_len]
