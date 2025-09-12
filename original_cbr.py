@@ -421,11 +421,11 @@ class OptimizedCueBasedRNNModel_MH(nn.Module):
             
             # Reshape for multi-head attention
             # query: batch_size x nhead x head_dim
-            query_mh = query.view(batch_size, self.nhead, self.head_dim)
+            query_mh = query.view(batch_size, self.nheads, self.head_dim)
             # keys: cache_len x batch_size x nhead x head_dim
-            keys_mh = current_keys.view(cache_len, batch_size, self.nhead, self.head_dim)
+            keys_mh = current_keys.view(cache_len, batch_size, self.nheads, self.head_dim)
             # values: cache_len x batch_size x nhead x head_dim  
-            values_mh = current_values.view(cache_len, batch_size, self.nhead, self.head_dim)
+            values_mh = current_values.view(cache_len, batch_size, self.nheads, self.head_dim)
             
             # Compute attention scores for each head: batch_size x nhead x cache_len
             attn_scores = torch.einsum('bnh,cbnh->bnc', query_mh, keys_mh)
