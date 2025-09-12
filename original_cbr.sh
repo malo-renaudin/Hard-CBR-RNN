@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=optimized_cbr_very_simple_mh
-#SBATCH --output=logs/optimized_cbr_very_simple%j.log
-#SBATCH --error=logs/optimized_cbr_very_simple%j.err
+#SBATCH --job-name=optimized_cbr_gumbel
+#SBATCH --output=logs/optimized_cbr_gumbel%j.log
+#SBATCH --error=logs/optimized_cbr_gumbel%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
