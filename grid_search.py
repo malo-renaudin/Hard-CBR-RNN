@@ -86,7 +86,7 @@ def create_configs():
         # {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
         # {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
         # {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 512, 'nheads': 1, 'lr': 1e-5, 'dropout': 0.5, 'use_gumbel_softmax': False}
+        {'nhid': 512, 'nheads': 1, 'lr': 1e-4, 'dropout': 0.5, 'use_gumbel_softmax': False}
     ]
     
     # Create configs directory
@@ -234,6 +234,11 @@ def train_single_job(job_id):
         # Create model
         model = CBRLanguageModel(**model_kwargs)
         
+        csv_logger = pl.loggers.CSVLogger(
+            save_dir=str(job_dir),
+            name="training_metrics",
+            version="",
+        )
         # Setup trainer with job-specific checkpoint directory
         trainer = pl.Trainer(
             max_epochs=10,
@@ -248,7 +253,8 @@ def train_single_job(job_id):
             enable_model_summary=False,
             default_root_dir=str(job_dir),
             deterministic=False,
-            benchmark=True
+            benchmark=True,
+            logger=csv_logger
         )
         
         # Train the model
