@@ -32,7 +32,7 @@ class CBRLanguageModel(pl.LightningModule):
         
         self.lr = lr
         self.weight_decay = weight_decay
-        self.criterion = nn.CrossEntropyLoss(reduction='mean')
+        self.criterion = nn.CrossEntropyLoss()
         
         # Debug counters and tracking
         self.debug_step = 0
