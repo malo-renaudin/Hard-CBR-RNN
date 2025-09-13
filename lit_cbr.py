@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import math
 import numpy as np
+from transformers import get_cosine_schedule_with_warmup
 
 
 class CBRLanguageModel(pl.LightningModule):
@@ -167,28 +168,29 @@ class CBRLanguageModel(pl.LightningModule):
             self.log("weight_norm_avg", sum(all_norms) / len(all_norms))
     
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
+        optimizer = AdamW(
             self.parameters(),
             lr=self.lr,
-            betas=(0.9, 0.999),
-            eps=1e-8,
             weight_decay=self.weight_decay,
-            amsgrad=False
+            betas=(0.9, 0.999),
+            eps=1e-8
         )
-        
-        # Learning rate warmup
-        def lr_lambda(current_step):
-            if current_step < 2000:
-                return current_step / 2000.0
-            return 1.0
-        
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-        
+
+        # total training steps = epochs * steps per epoch
+        total_steps = self.trainer.estimated_stepping_batches
+        warmup_steps = int(self.warmup_ratio * total_steps)
+
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps
+        )
+
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "interval": "step",
+                "interval": "step",   # update every step
                 "frequency": 1
             }
         }
