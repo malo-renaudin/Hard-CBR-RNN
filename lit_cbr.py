@@ -25,6 +25,9 @@ class CBRLanguageModel(pl.LightningModule):
             nheads=nheads
         )
         
+        # Add label smoothing to prevent overconfident predictions
+        self.criterion = nn.CrossEntropyLoss(reduction='mean', label_smoothing=0.05)
+        
         self.use_gumbel_softmax = use_gumbel_softmax
         self.initial_temp = initial_temp if use_gumbel_softmax else None
         self.final_temp = final_temp if use_gumbel_softmax else None
@@ -32,12 +35,7 @@ class CBRLanguageModel(pl.LightningModule):
         
         self.lr = lr
         self.weight_decay = weight_decay
-        self.criterion = nn.CrossEntropyLoss(reduction='mean')
         self.vocab_size = vocab_size
-        
-        # Simple tracking
-        self.step_count = 0
-        self.loss_history = []
         
     def get_current_temperature(self):
         if not self.use_gumbel_softmax:
@@ -60,79 +58,12 @@ class CBRLanguageModel(pl.LightningModule):
             
         return max(temp, 0.1)
     
-    def check_training_health(self, loss, output_logits, targets, stage):
-        """Essential training health checks"""
-        
-        # 1. Loss monitoring
-        if torch.isnan(loss) or torch.isinf(loss):
-            print(f"CRITICAL: Invalid loss detected: {loss}")
-            return False
-        
-        if loss.item() > 15:
-            print(f"WARNING: Very high loss: {loss.item():.4f}")
-            
-        # Track loss history for training dynamics
-        if stage == "train":
-            self.loss_history.append(loss.item())
-            if len(self.loss_history) > 100:
-                self.loss_history = self.loss_history[-100:]
-        
-        # 2. Output logits health
-        if torch.isnan(output_logits).any() or torch.isinf(output_logits).any():
-            print(f"CRITICAL: Invalid values in model outputs")
-            return False
-            
-        # Check if model is learning (logits should have some range)
-        logit_max = output_logits.max(dim=-1)[0]
-        logit_min = output_logits.min(dim=-1)[0]
-        logit_range = (logit_max - logit_min).mean().item()
-        
-        if logit_range < 0.1:
-            print(f"WARNING: Very small logit range: {logit_range:.4f} - model may not be learning")
-            
-        self.log(f"{stage}_logit_range", logit_range)
-        
-        # 3. Prediction quality
-        predictions = output_logits.argmax(dim=-1)
-        accuracy = (predictions == targets).float().mean()
-        
-        # Check vocabulary usage
-        unique_preds = torch.unique(predictions).numel()
-        vocab_usage = unique_preds / self.vocab_size
-        
-        if vocab_usage < 0.01:
-            print(f"WARNING: Using only {unique_preds}/{self.vocab_size} vocabulary tokens")
-            
-        self.log(f"{stage}_accuracy", accuracy, prog_bar=True)
-        self.log(f"{stage}_vocab_usage", vocab_usage)
-        
-        return True
-    
-    def check_input_data(self, sequences, targets, stage):
-        """Basic input data validation"""
-        
-        # Check token ranges
-        if sequences.min() < 0 or sequences.max() >= self.vocab_size:
-            print(f"ERROR: Invalid token indices - min: {sequences.min()}, max: {sequences.max()}")
-            return False
-            
-        if targets.min() < 0 or targets.max() >= self.vocab_size:
-            print(f"ERROR: Invalid target indices - min: {targets.min()}, max: {targets.max()}")
-            return False
-        
-        # Log basic input stats
-        self.log(f"{stage}_seq_len", sequences.shape[1])
-        self.log(f"{stage}_batch_size", sequences.shape[0])
-        
-        return True
-    
     def _shared_step(self, batch, stage):
-        self.step_count += 1
-        
         sequences, targets = batch
         
         # Basic input validation
-        if not self.check_input_data(sequences, targets, stage):
+        if sequences.min() < 0 or sequences.max() >= self.vocab_size:
+            print(f"ERROR: Invalid token indices in {stage}")
             return torch.tensor(float('inf'), device=sequences.device, requires_grad=True)
         
         sequences = sequences.transpose(0, 1)
@@ -164,6 +95,12 @@ class CBRLanguageModel(pl.LightningModule):
         output_flat = output.reshape(-1, output.size(-1))
         targets_flat = targets.reshape(-1)
         
+        # Key metric: Logits range (model expressiveness)
+        logit_max = output_flat.max(dim=-1)[0]
+        logit_min = output_flat.min(dim=-1)[0]
+        logit_range = (logit_max - logit_min).mean().item()
+        self.log(f"{stage}_logit_range", logit_range)
+        
         # Compute loss
         try:
             lm_loss = self.criterion(output_flat, targets_flat)
@@ -171,18 +108,39 @@ class CBRLanguageModel(pl.LightningModule):
             print(f"ERROR in loss computation: {e}")
             return torch.tensor(float('inf'), device=sequences.device, requires_grad=True)
         
-        # Essential health checks
-        if not self.check_training_health(lm_loss, output_flat, targets_flat, stage):
+        # Loss validation
+        if torch.isnan(lm_loss) or torch.isinf(lm_loss):
+            print(f"CRITICAL: Invalid loss detected: {lm_loss}")
             return torch.tensor(float('inf'), device=sequences.device, requires_grad=True)
+        
+        # Basic prediction metrics
+        predictions = output_flat.argmax(dim=-1)
+        accuracy = (predictions == targets_flat).float().mean()
+        
+        # Prediction confidence and diversity metrics
+        probs = F.softmax(output_flat, dim=-1)
+        max_probs = probs.max(dim=-1)[0]
+        avg_confidence = max_probs.mean().item()
+        
+        # Entropy (prediction diversity) - higher = more diverse
+        entropy = -(probs * torch.log(probs + 1e-8)).sum(dim=-1).mean()
+        max_entropy = math.log(self.vocab_size)
+        normalized_entropy = entropy / max_entropy
+        
+        # Check for model collapse (predicting same token repeatedly)
+        most_common_pred = torch.bincount(predictions.flatten()).max().item()
+        repetition_ratio = most_common_pred / predictions.numel()
         
         # Compute perplexity
         ppl = torch.exp(torch.clamp(lm_loss, max=10))
         
-        # Log main metrics
-        self.log(f"{stage}_loss", lm_loss, prog_bar=(stage == "train"), 
-                on_step=(stage == "train"), on_epoch=True, sync_dist=True)
-        self.log(f"{stage}_ppl", ppl, prog_bar=True,
-                on_step=(stage == "train"), on_epoch=True, sync_dist=True)
+        # Log core metrics
+        self.log(f"{stage}_loss", lm_loss, prog_bar=True, on_step=(stage == "train"), on_epoch=True)
+        self.log(f"{stage}_ppl", ppl, prog_bar=True, on_step=(stage == "train"), on_epoch=True)
+        self.log(f"{stage}_accuracy", accuracy)
+        self.log(f"{stage}_confidence", avg_confidence)  # How confident are predictions?
+        self.log(f"{stage}_entropy_norm", normalized_entropy)  # How diverse are predictions?
+        self.log(f"{stage}_repetition_ratio", repetition_ratio)  # Are we stuck on one token?
         
         return lm_loss
     
@@ -193,43 +151,20 @@ class CBRLanguageModel(pl.LightningModule):
         return self._shared_step(batch, "val")
     
     def on_train_epoch_end(self):
-        """Simple epoch-end checks"""
-        # Check loss trends
-        if len(self.loss_history) >= 20:
-            recent_losses = self.loss_history[-20:]
-            loss_trend = recent_losses[-1] - recent_losses[0]
-            loss_std = np.std(recent_losses)
-            
-            self.log("loss_trend", loss_trend)
-            self.log("loss_stability", loss_std)
-            
-            if loss_std < 1e-6:
-                print("WARNING: Loss appears stuck (very low variance)")
-        
-        # Comprehensive parameter and gradient health check
-        param_norms = []
-        weight_changes = []
-        
+        """Log weight norms at epoch end"""
+        # Weight norms by layer
+        weight_norms = {}
         for name, param in self.named_parameters():
-            param_norm = param.norm().item()
-            param_norms.append(param_norm)
-            
-            # Check for parameter explosion
-            if param_norm > 100:
-                print(f"WARNING: Large parameter norm in {name}: {param_norm:.2f}")
-            
-            # Check for dead parameters (no variance)
-            if param.numel() > 1:
-                param_std = param.std().item()
-                if param_std < 1e-7:
-                    print(f"WARNING: Dead parameters in {name}: std={param_std:.2e}")
+            if 'weight' in name:
+                norm = param.norm().item()
+                weight_norms[name.replace('.', '_')] = norm
+                self.log(f"weight_norm_{name.replace('.', '_')}", norm)
         
-        if param_norms:
-            self.log("max_param_norm", max(param_norms))
-            self.log("avg_param_norm", np.mean(param_norms))
-            
-        print(f"Epoch {self.current_epoch}: Max param norm = {max(param_norms):.4f}, Avg = {np.mean(param_norms):.4f}")
-
+        # Overall weight statistics
+        all_norms = list(weight_norms.values())
+        if all_norms:
+            self.log("weight_norm_max", max(all_norms))
+            self.log("weight_norm_avg", sum(all_norms) / len(all_norms))
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -241,42 +176,43 @@ class CBRLanguageModel(pl.LightningModule):
             amsgrad=False
         )
         
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=self.trainer.max_epochs,
-            eta_min=self.lr * 0.01
-        )
+        # Learning rate warmup
+        def lr_lambda(current_step):
+            if current_step < 2000:
+                return current_step / 2000.0
+            return 1.0
+        
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "interval": "epoch",
+                "interval": "step",
                 "frequency": 1
             }
         }
     
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        """Optimizer step with gradient monitoring"""
+        """Monitor gradients and learning rate"""
         # Compute gradients
         optimizer_closure()
         
-        # Check gradients
-        total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=float('inf'))
+        # Gradient norm before clipping
+        total_norm = 0
+        for param in self.parameters():
+            if param.grad is not None:
+                total_norm += param.grad.data.norm(2).item() ** 2
+        total_norm = total_norm ** 0.5
         
-        if total_norm > 1000:
-            print(f"CRITICAL: Gradient explosion: {total_norm:.2f} - skipping step")
-            optimizer.zero_grad()
-            return
+        self.log("grad_norm", total_norm)
         
         # Apply gradient clipping
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.25)
         
-        # Log gradient norm
-        self.log("grad_norm", total_norm)
-        
-        if total_norm > 10:
-            print(f"WARNING: Large gradients: {total_norm:.4f}")
+        # Log current learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        self.log("learning_rate", current_lr)
         
         # Optimizer step
         optimizer.step()

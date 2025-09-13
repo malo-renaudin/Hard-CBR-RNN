@@ -202,11 +202,11 @@ def train_single_job(job_id):
         
         # Create data loaders
         train_loader = DataLoader(
-            train_ds, batch_size=32, shuffle=True,
+            train_ds, batch_size=256, shuffle=True,
             num_workers=4, drop_last=True, pin_memory=True
         )
         val_loader = DataLoader(
-            val_ds, batch_size=32, shuffle=False,
+            val_ds, batch_size=256, shuffle=False,
             num_workers=4, drop_last=True, pin_memory=True
         )
         
