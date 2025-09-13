@@ -476,8 +476,8 @@ def train_single_job(job_id):
         raw = datasets.load_from_disk(data_dir)
         
         # Create datasets
-        train_ds = WikiTextDataset(raw['train'], tokenizer, seq_len=35)
-        val_ds = WikiTextDataset(raw['validation'], tokenizer, seq_len=35)
+        train_ds = WikiTextDataset(raw['train'], tokenizer, seq_len=64)
+        val_ds = WikiTextDataset(raw['validation'], tokenizer, seq_len=64)
         
         # Create data loaders
         train_loader = DataLoader(
