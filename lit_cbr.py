@@ -5,8 +5,8 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import math
 import numpy as np
-from transformers import get_cosine_schedule_with_warmup
-
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import LambdaLR
 
 class CBRLanguageModel(pl.LightningModule):
     """PyTorch Lightning module for training CueBasedRNNModel with essential monitoring"""
@@ -176,24 +176,29 @@ class CBRLanguageModel(pl.LightningModule):
             eps=1e-8
         )
 
-        # total training steps = epochs * steps per epoch
         total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = int(self.warmup_ratio * total_steps)
+        warmup_steps = int(0.05 * total_steps)  # 5% warmup, tweak as needed
 
-        scheduler = get_cosine_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=warmup_steps,
-            num_training_steps=total_steps
-        )
+        def lr_lambda(step):
+            if step < warmup_steps:
+                # Linear warmup
+                return float(step) / float(max(1, warmup_steps))
+            else:
+                # Cosine decay
+                progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+                return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+        scheduler = LambdaLR(optimizer, lr_lambda)
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "interval": "step",   # update every step
+                "interval": "step",  # update every step
                 "frequency": 1
             }
         }
+
     
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
         """Monitor gradients and learning rate"""
