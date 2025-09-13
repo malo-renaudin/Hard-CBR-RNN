@@ -499,11 +499,11 @@ class CBR_RNN(nn.Module):
     def __init__(self, ntoken, ninp, nhid, nlayers, nheads=1, dropout=0.5):
         super().__init__()
         self.drop = nn.Dropout(dropout)
-        self.encoder = nn.Embedding(ntoken+1, ninp)       
+        self.encoder = nn.Embedding(ntoken, ninp)       
         self.q = nn.Linear(ninp+nhid, nhid)
         self.intermediate_h = nn.Linear(nhid*4, nhid*4)
         self.final_h = nn.Linear(nhid*4, nhid*3)
-        self.decoder = nn.Linear(nhid, ntoken+1)
+        self.decoder = nn.Linear(nhid, ntoken)
         self.q_norm = nn.LayerNorm(nhid)
         self.int_norm = nn.LayerNorm(nhid * 4)
         self.f_norm = nn.LayerNorm(nhid * 3)            
