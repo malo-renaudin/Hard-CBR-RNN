@@ -517,22 +517,35 @@ class CBR_RNN(nn.Module):
         self.init_weights()
 
     def init_weights(self):
-        initrange = 0.1
+        # Embedding layer - smaller std for stability
+        nn.init.normal_(self.encoder.weight, mean=0.0, std=0.02)
         
-        # Embedding and output
-        nn.init.uniform_(self.encoder.weight, -initrange, initrange)
+        # Output layer - specialized for large vocabulary
+        # Use scaled normal initialization for large vocab (50K)
+        output_std = (2.0 / (self.nhid + self.encoder.num_embeddings)) ** 0.5
+        nn.init.normal_(self.decoder.weight, mean=0.0, std=output_std)
         nn.init.zeros_(self.decoder.bias)
-        nn.init.uniform_(self.decoder.weight, -initrange, initrange)
         
-        # Main computational layers - ADD THESE:
-        nn.init.xavier_uniform_(self.q.weight)
+        # Query layer - Kaiming initialization for ReLU activation
+        nn.init.kaiming_uniform_(self.q.weight, mode='fan_in', nonlinearity='relu')
         nn.init.zeros_(self.q.bias)
         
-        nn.init.xavier_uniform_(self.intermediate_h.weight)
+        # Intermediate layer - He initialization with residual scaling
+        nn.init.kaiming_uniform_(self.intermediate_h.weight, mode='fan_in', nonlinearity='relu')
+        # Scale down for residual-like behavior
+        self.intermediate_h.weight.data *= 0.5
         nn.init.zeros_(self.intermediate_h.bias)
         
-        nn.init.xavier_uniform_(self.final_h.weight) 
+        # Final layer - Xavier for linear transformation before split
+        nn.init.xavier_uniform_(self.final_h.weight, gain=1.0)
         nn.init.zeros_(self.final_h.bias)
+        
+        # Layer norm parameters (if they have learnable params)
+        for layer_norm in [self.q_norm, self.int_norm, self.f_norm]:
+            if hasattr(layer_norm, 'weight'):
+                nn.init.ones_(layer_norm.weight)
+            if hasattr(layer_norm, 'bias'):
+                nn.init.zeros_(layer_norm.bias)
         
     def forward(self, observation, initial_cache, temperature=1.0, use_gumbel=False, hard=False):
         hidden_init, key_cache_init, value_cache_init = initial_cache
