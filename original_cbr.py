@@ -517,11 +517,23 @@ class CBR_RNN(nn.Module):
         self.init_weights()
 
     def init_weights(self):
-        initrange = 0.1
+        initrange = 0.01
+        
+        # Embedding and output
         nn.init.uniform_(self.encoder.weight, -initrange, initrange)
         nn.init.zeros_(self.decoder.bias)
         nn.init.uniform_(self.decoder.weight, -initrange, initrange)
-
+        
+        # Main computational layers - ADD THESE:
+        nn.init.xavier_uniform_(self.q.weight)
+        nn.init.zeros_(self.q.bias)
+        
+        nn.init.xavier_uniform_(self.intermediate_h.weight)
+        nn.init.zeros_(self.intermediate_h.bias)
+        
+        nn.init.xavier_uniform_(self.final_h.weight) 
+        nn.init.zeros_(self.final_h.bias)
+        
     def forward(self, observation, initial_cache, temperature=1.0, use_gumbel=False, hard=False):
         hidden_init, key_cache_init, value_cache_init = initial_cache
         seq_len, batch_size = observation.shape
