@@ -71,8 +71,15 @@ class WikiTextDataset(Dataset):
         return seq, target
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import pytorch_lightning as pl
+import math
+import numpy as np
+
 class CBRLanguageModel(pl.LightningModule):
-    """PyTorch Lightning module for training CueBasedRNNModel"""
+    """PyTorch Lightning module for training CueBasedRNNModel with extensive debugging"""
     
     def __init__(self, vocab_size, ninp=512, nhid=512, nlayers=1, 
                  dropout=0.5, nheads=8, lr=1.0, weight_decay=0,
@@ -98,6 +105,9 @@ class CBRLanguageModel(pl.LightningModule):
         self.weight_decay = weight_decay
         self.criterion = nn.CrossEntropyLoss(reduction='mean')
         
+        # Debug counters
+        self.debug_step = 0
+        
     def get_current_temperature(self):
         if not self.use_gumbel_softmax:
             return 1.0
@@ -118,13 +128,57 @@ class CBRLanguageModel(pl.LightningModule):
             temp = self.initial_temp
             
         return max(temp, 0.1)
+    
+    def check_tensor_health(self, tensor, name, stage):
+        """Check for NaN, Inf, and extreme values"""
+        if torch.isnan(tensor).any():
+            self.log(f"{stage}_nan_{name}", 1.0)
+            print(f"WARNING: NaN detected in {name} during {stage}")
+            
+        if torch.isinf(tensor).any():
+            self.log(f"{stage}_inf_{name}", 1.0)
+            print(f"WARNING: Inf detected in {name} during {stage}")
+            
+        tensor_max = tensor.max().item()
+        tensor_min = tensor.min().item()
+        tensor_mean = tensor.mean().item()
+        tensor_std = tensor.std().item()
         
+        # Log tensor statistics
+        self.log(f"{stage}_{name}_max", tensor_max)
+        self.log(f"{stage}_{name}_min", tensor_min)
+        self.log(f"{stage}_{name}_mean", tensor_mean)
+        self.log(f"{stage}_{name}_std", tensor_std)
+        
+        # Check for extreme values
+        if abs(tensor_max) > 100:
+            print(f"WARNING: Large values in {name}: max={tensor_max}")
+        if abs(tensor_min) < 1e-6 and tensor_min != 0:
+            print(f"WARNING: Very small values in {name}: min={tensor_min}")
+        if tensor_std > 10:
+            print(f"WARNING: High variance in {name}: std={tensor_std}")
+            
     def _shared_step(self, batch, stage):
+        self.debug_step += 1
+        
         sequences, targets = batch
+        
+        # Check input data health
+        self.check_tensor_health(sequences.float(), "input_sequences", stage)
+        self.check_tensor_health(targets.float(), "input_targets", stage)
+        
+        # Log input statistics
+        self.log(f"{stage}_seq_max_token", sequences.max().item())
+        self.log(f"{stage}_seq_min_token", sequences.min().item())
+        
         sequences = sequences.transpose(0, 1)
         targets = targets.transpose(0, 1)
         
         initial_cache = self.model.init_cache(sequences)
+        
+        # Check cache initialization
+        for i, cache_tensor in enumerate(initial_cache):
+            self.check_tensor_health(cache_tensor, f"initial_cache_{i}", stage)
         
         forward_kwargs = {
             'observation': sequences,
@@ -137,19 +191,90 @@ class CBRLanguageModel(pl.LightningModule):
                 'temperature': current_temp,
                 'use_gumbel': True
             })
+            self.log(f"{stage}_gumbel_temp", current_temp)
             
-        output, final_hidden = self.model.forward(**forward_kwargs)
+        # Forward pass
+        try:
+            output, final_hidden = self.model.forward(**forward_kwargs)
+        except Exception as e:
+            print(f"ERROR in forward pass: {e}")
+            # Return a dummy loss to continue training
+            return torch.tensor(float('inf'), device=sequences.device, requires_grad=True)
         
+        # Check model outputs
+        self.check_tensor_health(output, "model_output", stage)
+        self.check_tensor_health(final_hidden, "final_hidden", stage)
+        
+        # Check output logits before loss computation
         output_flat = output.reshape(-1, output.size(-1))
         targets_flat = targets.reshape(-1)
         
-        lm_loss = self.criterion(output_flat, targets_flat)
-        ppl = torch.exp(lm_loss)
+        self.check_tensor_health(output_flat, "output_logits", stage)
         
+        # Check for degenerate predictions (all same class)
+        output_probs = F.softmax(output_flat, dim=-1)
+        max_probs = output_probs.max(dim=-1)[0]
+        self.log(f"{stage}_max_prob_mean", max_probs.mean().item())
+        self.log(f"{stage}_max_prob_max", max_probs.max().item())
+        
+        # Check entropy (diversity of predictions)
+        entropy = -(output_probs * torch.log(output_probs + 1e-8)).sum(dim=-1).mean()
+        self.log(f"{stage}_prediction_entropy", entropy.item())
+        
+        # Compute loss with numerical stability
+        try:
+            lm_loss = self.criterion(output_flat, targets_flat)
+        except Exception as e:
+            print(f"ERROR in loss computation: {e}")
+            return torch.tensor(float('inf'), device=sequences.device, requires_grad=True)
+            
+        # Check loss value
+        if torch.isnan(lm_loss) or torch.isinf(lm_loss):
+            print(f"WARNING: Invalid loss detected: {lm_loss.item()}")
+            return torch.tensor(float('inf'), device=sequences.device, requires_grad=True)
+            
+        if lm_loss.item() > 20:  # Suspiciously high loss
+            print(f"WARNING: Very high loss: {lm_loss.item()}")
+            
+        # Compute perplexity safely
+        try:
+            ppl = torch.exp(torch.clamp(lm_loss, max=10))  # Clamp to prevent overflow
+        except:
+            ppl = torch.tensor(float('inf'))
+            
+        # Log metrics
         self.log(f"{stage}_loss", lm_loss, prog_bar=(stage == "train"), 
                 on_step=(stage == "train"), on_epoch=True, sync_dist=True)
         self.log(f"{stage}_ppl", ppl, prog_bar=True,
                 on_step=(stage == "train"), on_epoch=True, sync_dist=True)
+        
+        # Additional debugging metrics
+        self.log(f"{stage}_loss_raw", lm_loss.item())
+        
+        # Check accuracy
+        predictions = output_flat.argmax(dim=-1)
+        accuracy = (predictions == targets_flat).float().mean()
+        self.log(f"{stage}_accuracy", accuracy)
+        
+        # Monitor gradient flow during training
+        if stage == "train" and self.debug_step % 100 == 0:
+            # Check if gradients are flowing
+            total_params = 0
+            grad_norm_sq = 0
+            
+            for name, param in self.named_parameters():
+                if param.grad is not None:
+                    param_norm = param.grad.data.norm(2)
+                    grad_norm_sq += param_norm.item() ** 2
+                    total_params += param.numel()
+                    
+                    # Log individual parameter gradient norms
+                    if self.debug_step % 500 == 0:  # Less frequent logging
+                        self.log(f"grad_norm_{name.replace('.', '_')}", param_norm.item())
+            
+            total_grad_norm = grad_norm_sq ** 0.5
+            self.log(f"{stage}_total_grad_norm", total_grad_norm)
+            self.log(f"{stage}_total_params", float(total_params))
         
         if self.use_gumbel_softmax:
             current_temp = self.get_current_temperature()
@@ -164,6 +289,21 @@ class CBRLanguageModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         return self._shared_step(batch, "val")
     
+    def on_train_epoch_end(self):
+        """Additional checks at epoch end"""
+        # Check model parameter health
+        for name, param in self.named_parameters():
+            if param.data is not None:
+                param_norm = param.data.norm(2).item()
+                self.log(f"param_norm_{name.replace('.', '_')}", param_norm)
+                
+                if param_norm > 100:
+                    print(f"WARNING: Large parameter norm in {name}: {param_norm}")
+                    
+        # Log current learning rate
+        current_lr = self.optimizers().param_groups[0]['lr']
+        self.log("current_lr", current_lr)
+        
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
@@ -188,19 +328,44 @@ class CBRLanguageModel(pl.LightningModule):
                 "frequency": 1
             }
         }
-
+    
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+        """Custom optimizer step with gradient monitoring"""
+        # Compute gradients
+        optimizer_closure()
+        
+        # Check gradient norms before clipping
+        total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=float('inf'))
+        self.log("grad_norm_before_clip", total_norm.item())
+        
+        # Apply gradient clipping
+        clipped_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.25)
+        self.log("grad_norm_after_clip", clipped_norm.item())
+        
+        if total_norm > 10:
+            print(f"WARNING: Large gradient norm: {total_norm}")
+            
+        # Check if gradients are exploding
+        if total_norm > 1000:
+            print(f"CRITICAL: Gradient explosion detected: {total_norm}")
+            # Skip this update
+            return
+            
+        # Perform optimizer step
+        optimizer.step()
+        optimizer.zero_grad()
 
 def create_configs():
     """Create all configuration files for job array"""
     configs = [
-        {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        # {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        # {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        # {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
         {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        # {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        # {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        # {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        # {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
     ]
     
     # Create configs directory
@@ -350,7 +515,7 @@ def train_single_job(job_id):
         
         # Setup trainer with job-specific checkpoint directory
         trainer = pl.Trainer(
-            max_epochs=50,
+            max_epochs=10,
             gradient_clip_val=0.25,
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
             devices=1,
