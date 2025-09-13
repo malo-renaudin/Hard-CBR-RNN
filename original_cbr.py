@@ -517,7 +517,7 @@ class CBR_RNN(nn.Module):
         self.init_weights()
 
     def init_weights(self):
-        initrange = 0.01
+        initrange = 0.1
         
         # Embedding and output
         nn.init.uniform_(self.encoder.weight, -initrange, initrange)
