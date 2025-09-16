@@ -11,23 +11,54 @@ from original_cbr import CueBasedRNNModel, OptimizedCueBasedRNNModel, OptimizedC
 # Assume CueBasedRNNModel is imported from your module
 # from your_module import CueBasedRNNModel
 
+import json
+from collections import Counter
+
 class WordTokenizer:
     """Simple word-level tokenizer for WikiText"""
-    def __init__(self, list_of_texts, vocab_size=50000):
-        tokens = []
-        for text in list_of_texts:
-            tokens.extend(text.split())
-        counter = Counter(tokens)
-        most_common = counter.most_common(vocab_size - 2)  # reserve for special tokens
-        self.itos = ["<unk>"] + [tok for tok, _ in most_common]
-        self.stoi = {tok: i for i, tok in enumerate(self.itos)}
-        self.vocab_size = len(self.itos)
+    def __init__(self, list_of_texts=None, vocab_size=50000):
+        if list_of_texts is not None:  # normal training mode
+            tokens = []
+            for text in list_of_texts:
+                tokens.extend(text.split())
+            counter = Counter(tokens)
+            most_common = counter.most_common(vocab_size - 2)  # reserve for special tokens
+            self.itos = ["<unk>"] + [tok for tok, _ in most_common]
+            self.stoi = {tok: i for i, tok in enumerate(self.itos)}
+            self.vocab_size = len(self.itos)
+        else:
+            # when loading, attributes will be set manually
+            self.itos = []
+            self.stoi = {}
+            self.vocab_size = 0
 
     def encode(self, text):
         return [self.stoi.get(tok, 0) for tok in text.split()]  # 0 = <unk>
 
     def decode(self, ids):
         return " ".join([self.itos[i] for i in ids])
+
+    def save(self, filepath):
+        """Save tokenizer vocabulary to JSON file"""
+        data = {
+            "itos": self.itos,
+            "stoi": self.stoi,
+            "vocab_size": self.vocab_size
+        }
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    @classmethod
+    def load(cls, filepath):
+        """Load tokenizer vocabulary from JSON file"""
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        tokenizer = cls(list_of_texts=None)
+        tokenizer.itos = data["itos"]
+        tokenizer.stoi = {k: int(v) for k, v in data["stoi"].items()}
+        tokenizer.vocab_size = data["vocab_size"]
+        return tokenizer
+
 
 
 class WikiTextDataset(Dataset):
@@ -261,7 +292,8 @@ def train_cbr_model(use_gumbel_softmax=False, gumbel_config=None, model_kwargs=m
     # Build tokenizer
     all_texts = list(train_dataset['text']) + list(val_dataset['text']) + list(test_dataset['text'])
     tokenizer = WordTokenizer(all_texts, vocab_size=50000)
-    
+    tokenizer.save("tokenizer.json")
+
     # Create datasets
     seq_len = 35  # Match reference implementation
     batch_size = 256
