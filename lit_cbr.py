@@ -201,7 +201,7 @@ class CBRLanguageModel(pl.LightningModule):
             factor=0.5,           # reduce LR by half
             patience=2,           # wait 2 epochs without improvement
             min_lr=1e-5,          # minimum LR
-            verbose=True
+
         )
 
         return {
