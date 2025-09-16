@@ -54,7 +54,7 @@ class SimpleLSTM_LM(pl.LightningModule):
         self.lr = lr
         self.weight_decay = weight_decay
         self.criterion = nn.CrossEntropyLoss()
-        
+        self.vocab_size = vocab_size
     def _shared_step(self, batch, stage):
         """Shared step for train/val/test"""
         sequences, targets = batch

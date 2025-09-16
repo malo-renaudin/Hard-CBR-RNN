@@ -221,7 +221,7 @@ class SimpleTransformerLM(pl.LightningModule):
         self.lr = lr
         self.weight_decay = weight_decay
         self.criterion = nn.CrossEntropyLoss()
-        
+        self.vocab_size = vocab_size
         self.use_gumbel_softmax = use_gumbel_softmax
         self.initial_temp = initial_temp if use_gumbel_softmax else None
         self.final_temp = final_temp if use_gumbel_softmax else None
@@ -274,7 +274,7 @@ class SimpleTransformerLM(pl.LightningModule):
             self.log(f"{stage}_gumbel_temp", current_temp)
         # Forward pass
         try:
-            output, final_hidden = self.model.forward(**forward_kwargs)
+            output = self.model.forward(**forward_kwargs)
         except Exception as e:
             print(f"ERROR in forward pass: {e}")
             return torch.tensor(float('inf'), device=sequences.device, requires_grad=True)
