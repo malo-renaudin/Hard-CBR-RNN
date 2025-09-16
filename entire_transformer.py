@@ -30,7 +30,7 @@ class MultiHeadAttention(nn.Module):
         
         self.dropout = nn.Dropout(dropout)
         
-    def scaled_dot_product_attention(self, Q, K, V, temperature=1.0, use_gumbel=False, hard=False, mask=None):
+    def scaled_dot_product_attention(self, Q, K, V, mask=None, temperature=1.0, use_gumbel=False, hard=False):
         """
         Classic scaled dot-product attention
         Q, K, V: [batch_size, n_heads, seq_len, d_k]
@@ -58,7 +58,7 @@ class MultiHeadAttention(nn.Module):
         
         return output, attention_weights
     
-    def forward(self, query, key, value, temperature=1.0, use_gumbel=False, hard=False, mask=None):
+    def forward(self, query, key, value, mask=None, temperature=1.0, use_gumbel=False, hard=False):
         """
         Forward pass
         query, key, value: [batch_size, seq_len, d_model]
@@ -79,7 +79,7 @@ class MultiHeadAttention(nn.Module):
         
         # 3. Apply scaled dot-product attention
         attention_output, attention_weights = self.scaled_dot_product_attention(
-            Q, K, V, mask, temperature=temperature, use_gumbel=use_gumbel, hard=hard
+            Q=Q, K=K, V=V, mask=mask, temperature=temperature, use_gumbel=use_gumbel, hard=hard
         )
         
         # 4. Concatenate heads
@@ -120,9 +120,9 @@ class TransformerLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
     
-    def forward(self, x, temperature=1.0, use_gumbel=False, hard=False, mask=None):
+    def forward(self, x, mask=None, temperature=1.0, use_gumbel=False, hard=False):
         # Self-attention with residual connection
-        attn_output, attn_weights = self.self_attn(x, x, x, mask, temperature=temperature, use_gumbel=use_gumbel, hard=hard)
+        attn_output, attn_weights = self.self_attn(x, x, x, mask=mask, temperature=temperature, use_gumbel=use_gumbel, hard=hard)
         x = self.norm1(x + self.dropout1(attn_output))
         
         # Feed-forward with residual connection
@@ -399,7 +399,7 @@ class SimpleTransformerLM(pl.LightningModule):
                 "interval": "epoch",    # Reduce LR at epoch end
                 "frequency": 1
             }
-    }
+        }
 
     
     
