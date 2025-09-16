@@ -212,7 +212,7 @@ def train_single_job(job_id):
         model_kwargs = {
             'vocab_size': tokenizer.vocab_size,
             'dmodel': config['dmodel'],  # Use same as hidden
-            'num_layers': config['num_layers'],
+            'num_layers': 2,
             'dropout': config['dropout'],
             'nhead': config['nhead'],
             'lr': config['lr'],
