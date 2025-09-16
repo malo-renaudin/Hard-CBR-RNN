@@ -88,7 +88,7 @@ def create_configs():
     ]
     
     # Create configs directory
-    configs_dir = Path("job_cbr_configs")
+    configs_dir = Path("job_transformer_configs")
     configs_dir.mkdir(exist_ok=True)
     
     # Save each config
@@ -329,7 +329,7 @@ To run the job array:
 3. Check results: python train_single.py collect
 
 Files created:
-- job_cbr_configs/config_*.json ({num_configs} config files)
+- job_transformer_configs/config_*.json ({num_configs} config files)
 - shared_data/tokenizer.json
 - run_array_transformer.sh (SLURM script)
         """)
