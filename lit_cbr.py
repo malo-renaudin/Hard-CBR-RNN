@@ -7,6 +7,8 @@ import math
 import numpy as np
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 
 class CBRLanguageModel(pl.LightningModule):
     """PyTorch Lightning module for training CueBasedRNNModel with essential monitoring"""
@@ -166,8 +168,24 @@ class CBRLanguageModel(pl.LightningModule):
         if all_norms:
             self.log("weight_norm_max", max(all_norms))
             self.log("weight_norm_avg", sum(all_norms) / len(all_norms))
-    
+            
+    def on_after_backward(self):
+        """Log gradient norm after backward"""
+        if self.global_step % 50 == 0:
+            total_norm = 0
+            for p in self.parameters():
+                if p.grad is not None:
+                    total_norm += p.grad.data.norm(2).item() ** 2
+            total_norm = total_norm ** 0.5
+            self.log("grad_norm", total_norm, prog_bar=True)
+
+    def on_train_epoch_start(self):
+        """Log current learning rate"""
+        for opt in self.trainer.optimizers:
+            lr = opt.param_groups[0]["lr"]
+            self.log("learning_rate", lr, prog_bar=True)
     def configure_optimizers(self):
+        # Optimizer
         optimizer = AdamW(
             self.parameters(),
             lr=self.lr,
@@ -176,51 +194,25 @@ class CBRLanguageModel(pl.LightningModule):
             eps=1e-8
         )
 
-        total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = int(0.05 * total_steps)  # 5% warmup, tweak as needed
-
-        def lr_lambda(step):
-            if step < warmup_steps:
-                # Linear warmup
-                return float(step) / float(max(1, warmup_steps))
-            else:
-                # Cosine decay
-                progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-        scheduler = LambdaLR(optimizer, lr_lambda)
+        # Scheduler
+        scheduler = ReduceLROnPlateau(
+            optimizer,
+            mode='min',           # monitor validation loss
+            factor=0.5,           # reduce LR by half
+            patience=2,           # wait 2 epochs without improvement
+            min_lr=1e-5,          # minimum LR
+            verbose=True
+        )
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "interval": "step",  # update every step
+                "monitor": "val_loss",  # the metric to monitor
+                "interval": "epoch",    # Reduce LR at epoch end
                 "frequency": 1
             }
-        }
+    }
 
     
-    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        """Monitor gradients and learning rate"""
-        # Compute gradients
-        optimizer_closure()
-        
-        # Gradient norm before clipping
-        total_norm = 0
-        for param in self.parameters():
-            if param.grad is not None:
-                total_norm += param.grad.data.norm(2).item() ** 2
-        total_norm = total_norm ** 0.5
-        
-        self.log("grad_norm", total_norm)
-        
-        # Apply gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.25)
-        
-        # Log current learning rate
-        current_lr = optimizer.param_groups[0]['lr']
-        self.log("learning_rate", current_lr)
-        
-        # Optimizer step
-        optimizer.step()
-        optimizer.zero_grad()
+    

@@ -57,7 +57,7 @@ class WordTokenizer:
 
 class WikiTextDataset(Dataset):
     """Dataset for WikiText that produces sequences in the format expected by CueBasedRNNModel"""
-    def __init__(self, dataset, tokenizer, seq_len=35):
+    def __init__(self, dataset, tokenizer, seq_len=64):
         self.seq_len = seq_len
         text = " ".join(list(dataset["text"]))
         self.data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
@@ -161,11 +161,11 @@ def prepare_shared_data():
 def train_single_job(job_id):
     """Train a single job given its ID"""
     # Create job directory
-    job_dir = Path(f"job_{job_id:03d}")
+    job_dir = Path(f"job_cbr_{job_id:03d}")
     job_dir.mkdir(exist_ok=True)
     
     # Load config
-    config_file = Path(f"job_configs/config_{job_id:03d}.json")
+    config_file = Path(f"job_cbr_configs/config_{job_id:03d}.json")
     with open(config_file, 'r') as f:
         config = json.load(f)
     
@@ -237,7 +237,7 @@ def train_single_job(job_id):
       
         # Setup trainer with job-specific checkpoint directory
         trainer = pl.Trainer(
-            max_epochs=10,
+            max_epochs=50,
             gradient_clip_val=0.25,
             accelerator="gpu" if torch.cuda.is_available() else "cpu",
             devices=1,
