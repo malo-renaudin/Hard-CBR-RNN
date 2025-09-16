@@ -234,11 +234,7 @@ def train_single_job(job_id):
         # Create model
         model = CBRLanguageModel(**model_kwargs)
         
-        csv_logger = pl.loggers.CSVLogger(
-            save_dir=str(job_dir),
-            name="training_metrics",
-            version="",
-        )
+      
         # Setup trainer with job-specific checkpoint directory
         trainer = pl.Trainer(
             max_epochs=10,
@@ -253,8 +249,7 @@ def train_single_job(job_id):
             enable_model_summary=False,
             default_root_dir=str(job_dir),
             deterministic=False,
-            benchmark=True,
-            logger=csv_logger
+            benchmark=True
         )
         
         # Train the model

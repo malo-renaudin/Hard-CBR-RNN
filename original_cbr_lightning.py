@@ -111,7 +111,7 @@ class CBRLanguageModel(pl.LightningModule):
         
         # Initialize the CueBasedRNNModel
         self.model = CBR_RNN(
-            ntoken=vocab_size,
+            ntoken=vocab_size+1,
             ninp=ninp,
             nhid=nhid, 
             nlayers=nlayers,
@@ -264,7 +264,7 @@ class CBRLanguageModel(pl.LightningModule):
             }
         }
 
-def train_cbr_model(use_gumbel_softmax=False, gumbel_config=None, model_kwargs=model_kwargs):
+def train_cbr_model(use_gumbel_softmax=False, gumbel_config=None, model_kwargs=None):
     """
     Training script for the CueBasedRNNModel
     """
