@@ -101,8 +101,8 @@ def create_configs():
     slurm_script = f"""#!/bin/bash
 #SBATCH --job-name=transformer_training
 #SBATCH --array=0-{len(configs)-1}
-#SBATCH --output=job_outputs/job_%A_%a.out
-#SBATCH --error=job_outputs/job_%A_%a.err
+#SBATCH --output=job_outputs/job_transformer_%A_%a.out
+#SBATCH --error=job_outputs/job_transformer_%A_%a.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
@@ -120,7 +120,7 @@ def create_configs():
 mkdir -p job_outputs
 
 # Run the training script with the config for this array job
-python grid_search_transformer.py $SLURM_ARRAY_TASK_ID
+python grid_search.py $SLURM_ARRAY_TASK_ID
 """
     
     with open("run_array_transformer.sh", 'w') as f:
