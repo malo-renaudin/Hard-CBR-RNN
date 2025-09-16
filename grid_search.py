@@ -78,19 +78,18 @@ class WikiTextDataset(Dataset):
 def create_configs():
     """Create all configuration files for job array"""
     configs = [
-        # {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        # {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        # {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        # {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        # {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        # {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        # {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        # {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 512, 'nheads': 1, 'lr': 1e-4, 'dropout': 0.5, 'use_gumbel_softmax': False}
+        {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
     ]
     
     # Create configs directory
-    configs_dir = Path("job_configs")
+    configs_dir = Path("job_cbr_configs")
     configs_dir.mkdir(exist_ok=True)
     
     # Save each config
@@ -333,7 +332,7 @@ To run the job array:
 3. Check results: python train_single.py collect
 
 Files created:
-- job_configs/config_*.json ({num_configs} config files)
+- job_cbr_configs/config_*.json ({num_configs} config files)
 - shared_data/tokenizer.json
 - run_array.sh (SLURM script)
         """)
