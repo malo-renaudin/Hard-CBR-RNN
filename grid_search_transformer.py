@@ -120,7 +120,7 @@ def create_configs():
 mkdir -p job_outputs
 
 # Run the training script with the config for this array job
-python grid_search.py $SLURM_ARRAY_TASK_ID
+python grid_search_transformer.py $SLURM_ARRAY_TASK_ID
 """
     
     with open("run_array_transformer.sh", 'w') as f:
@@ -324,14 +324,14 @@ if __name__ == "__main__":
 Setup complete!
 
 To run the job array:
-1. Submit the job: sbatch run_array.sh
+1. Submit the job: sbatch _transformer.sh
 2. Monitor jobs: squeue -u $USER
 3. Check results: python train_single.py collect
 
 Files created:
 - job_cbr_configs/config_*.json ({num_configs} config files)
 - shared_data/tokenizer.json
-- run_array.sh (SLURM script)
+- run_array_transformer.sh (SLURM script)
         """)
         
     elif len(sys.argv) == 2:
