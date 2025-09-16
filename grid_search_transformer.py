@@ -120,7 +120,7 @@ def create_configs():
 mkdir -p job_outputs
 
 # Run the training script with the config for this array job
-python grid_search.py $SLURM_ARRAY_TASK_ID
+python grid_search_transformer.py $SLURM_ARRAY_TASK_ID
 """
     
     with open("run_array_transformer.sh", 'w') as f:
