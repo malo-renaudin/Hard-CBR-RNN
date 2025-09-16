@@ -29,7 +29,7 @@ class CBRLanguageModel(pl.LightningModule):
         )
         
         # Add label smoothing to prevent overconfident predictions
-        self.criterion = nn.CrossEntropyLoss(reduction='mean', label_smoothing=0.05)
+        self.criterion = nn.CrossEntropyLoss()
         
         self.use_gumbel_softmax = use_gumbel_softmax
         self.initial_temp = initial_temp if use_gumbel_softmax else None
