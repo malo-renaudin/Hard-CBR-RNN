@@ -58,7 +58,7 @@ class MultiHeadAttention(nn.Module):
         
         return output, attention_weights
     
-    def forward(self, query, key, value, mask=None):
+    def forward(self, query, key, value, temperature=1.0, use_gumbel=False, hard=False, mask=None):
         """
         Forward pass
         query, key, value: [batch_size, seq_len, d_model]
@@ -79,7 +79,7 @@ class MultiHeadAttention(nn.Module):
         
         # 3. Apply scaled dot-product attention
         attention_output, attention_weights = self.scaled_dot_product_attention(
-            Q, K, V, mask
+            Q, K, V, mask, temperature=temperature, use_gumbel=use_gumbel, hard=hard
         )
         
         # 4. Concatenate heads
@@ -120,9 +120,9 @@ class TransformerLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
     
-    def forward(self, x, mask=None):
+    def forward(self, x, temperature=1.0, use_gumbel=False, hard=False, mask=None):
         # Self-attention with residual connection
-        attn_output, attn_weights = self.self_attn(x, x, x, mask)
+        attn_output, attn_weights = self.self_attn(x, x, x, mask, temperature=temperature, use_gumbel=use_gumbel, hard=hard)
         x = self.norm1(x + self.dropout1(attn_output))
         
         # Feed-forward with residual connection
@@ -170,7 +170,7 @@ class SimpleTransformer(nn.Module):
         mask = torch.tril(torch.ones(seq_len, seq_len, device=device))
         return mask
     
-    def forward(self, src):
+    def forward(self, src, temperature=1.0, use_gumbel=False, hard=False):
         # src: [seq_len, batch_size] -> transpose to [batch_size, seq_len]
         src = src.transpose(0, 1)
         batch_size, seq_len = src.shape
@@ -190,7 +190,7 @@ class SimpleTransformer(nn.Module):
         
         # Pass through transformer layers
         for layer in self.layers:
-            x, _ = layer(x, causal_mask)
+            x, _ = layer(x=x, mask = causal_mask, temperature=temperature, use_gumbel=use_gumbel, hard=hard)
         
         # Project to vocabulary and transpose back to [seq_len, batch_size, vocab_size]
         logits = self.output_projection(x).transpose(0, 1)
@@ -262,7 +262,7 @@ class SimpleTransformerLM(pl.LightningModule):
         targets = targets.transpose(0, 1)
         
         forward_kwargs = {
-            'observation': sequences,
+            'src': sequences,
         }
         
         if self.use_gumbel_softmax:
