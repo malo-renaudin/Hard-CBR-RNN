@@ -77,14 +77,14 @@ class WikiTextDataset(Dataset):
 def create_configs():
     """Create all configuration files for job array"""
     configs = [
-        {'dmodel': 128, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'dmodel': 512, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'dmodel': 128, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'dmodel': 512, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'dmodel': 128, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'dmodel': 512, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'dmodel': 128, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'dmodel': 512, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'d_model': 128, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'d_model': 512, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'d_model': 128, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'d_model': 512, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'d_model': 128, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'d_model': 512, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'d_model': 128, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'d_model': 512, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
     ]
     
     # Create configs directory
@@ -211,7 +211,7 @@ def train_single_job(job_id):
         # Set up model kwargs
         model_kwargs = {
             'vocab_size': tokenizer.vocab_size,
-            'dmodel': config['dmodel'],  # Use same as hidden
+            'd_model': config['d_model'],  
             'num_layers': 2,
             'dropout': config['dropout'],
             'nhead': config['nhead'],
