@@ -336,7 +336,9 @@ class SimpleTransformerLM(pl.LightningModule):
         return self._shared_step(batch, "train")
     
     def validation_step(self, batch, batch_idx):
-        return self._shared_step(batch, "val")
+        loss = self._shared_step(batch, "val")
+        self.log("val_loss", loss, prog_bar=True, on_epoch=True, sync_dist=True)
+        return loss
     
     def on_train_epoch_end(self):
         """Log weight norms at epoch end"""
