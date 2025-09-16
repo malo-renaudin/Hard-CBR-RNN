@@ -205,7 +205,7 @@ def train_single_job(job_id):
         # Set up model kwargs
         model_kwargs = {
             'vocab_size': tokenizer.vocab_size,
-            'embed_dim': config['hid_dim'], 
+            'emb_dim': config['hid_dim'], 
             'hid_dim':config['hid_dim'], 
             'nlayers': 2,
             'dropout': config['dropout'],
