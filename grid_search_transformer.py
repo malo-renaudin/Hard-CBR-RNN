@@ -77,18 +77,18 @@ class WikiTextDataset(Dataset):
 def create_configs():
     """Create all configuration files for job array"""
     configs = [
-        {'d_model': 128, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'d_model': 512, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'d_model': 128, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'d_model': 512, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'d_model': 128, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'d_model': 512, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'d_model': 128, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'d_model': 512, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'d_model': 256, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'d_model': 1024, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'d_model': 256, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'d_model': 1024, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'d_model': 256, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'d_model': 1024, 'nhead': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'d_model': 256, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'d_model': 1024, 'nhead': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
     ]
     
     # Create configs directory
-    configs_dir = Path("job_transformer_configs")
+    configs_dir = Path("job_transformer_2_configs")
     configs_dir.mkdir(exist_ok=True)
     
     # Save each config
@@ -101,8 +101,8 @@ def create_configs():
     slurm_script = f"""#!/bin/bash
 #SBATCH --job-name=transformer_training
 #SBATCH --array=0-{len(configs)-1}
-#SBATCH --output=job_outputs/job_transformer_%A_%a.out
-#SBATCH --error=job_outputs/job_transformer_%A_%a.err
+#SBATCH --output=job_outputs/job_transformer_2_%A_%a.out
+#SBATCH --error=job_outputs/job_transformer_2_%A_%a.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
@@ -159,11 +159,11 @@ def prepare_shared_data():
 def train_single_job(job_id):
     """Train a single job given its ID"""
     # Create job directory
-    job_dir = Path(f"job_transformer_{job_id:03d}")
+    job_dir = Path(f"job_transformer_2_{job_id:03d}")
     job_dir.mkdir(exist_ok=True)
     
     # Load config
-    config_file = Path(f"job_transformer_configs/config_{job_id:03d}.json")
+    config_file = Path(f"job_transformer_2_configs/config_{job_id:03d}.json")
     with open(config_file, 'r') as f:
         config = json.load(f)
     
@@ -329,7 +329,7 @@ To run the job array:
 3. Check results: python train_single.py collect
 
 Files created:
-- job_transformer_configs/config_*.json ({num_configs} config files)
+- job_transformer_2_configs/config_*.json ({num_configs} config files)
 - shared_data/tokenizer.json
 - run_array_transformer.sh (SLURM script)
         """)
