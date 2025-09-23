@@ -89,7 +89,7 @@ def create_configs():
     ]
     
     # Create configs directory
-    configs_dir = Path("job_cbr_configs")
+    configs_dir = Path("job_cbr_2_configs")
     configs_dir.mkdir(exist_ok=True)
     
     # Save each config
@@ -160,11 +160,11 @@ def prepare_shared_data():
 def train_single_job(job_id):
     """Train a single job given its ID"""
     # Create job directory
-    job_dir = Path(f"job_cbr_{job_id:03d}")
+    job_dir = Path(f"job_cbr_2_{job_id:03d}")
     job_dir.mkdir(exist_ok=True)
     
     # Load config
-    config_file = Path(f"job_cbr_configs/config_{job_id:03d}.json")
+    config_file = Path(f"job_cbr_2_configs/config_{job_id:03d}.json")
     with open(config_file, 'r') as f:
         config = json.load(f)
     
