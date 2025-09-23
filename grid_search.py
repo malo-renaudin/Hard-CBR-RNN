@@ -78,14 +78,14 @@ class WikiTextDataset(Dataset):
 def create_configs():
     """Create all configuration files for job array"""
     configs = [
-        {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 128, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 128, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 512, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'nhid': 256, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'nhid': 1024, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'nhid': 256, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'nhid': 1024, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
+        {'nhid': 256, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'nhid': 1024, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'nhid': 256, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'nhid': 1024, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
     ]
     
     # Create configs directory
