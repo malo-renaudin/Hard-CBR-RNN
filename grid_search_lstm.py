@@ -78,7 +78,9 @@ def create_configs():
     """Create all configuration files for job array"""
     configs = [
         {'hid_dim': 128, 'lr': 5e-4, 'dropout': 0.5},
-        {'hid_dim': 128, 'lr': 5e-4, 'dropout': 0.5}
+        {'hid_dim': 256, 'lr': 5e-4, 'dropout': 0.5},
+        {'hid_dim': 512, 'lr': 5e-4, 'dropout': 0.5},
+        {'hid_dim': 1024, 'lr': 5e-4, 'dropout': 0.5}
     ]
     
     # Create configs directory
