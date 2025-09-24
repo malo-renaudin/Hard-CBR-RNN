@@ -78,14 +78,17 @@ class WikiTextDataset(Dataset):
 def create_configs():
     """Create all configuration files for job array"""
     configs = [
-        {'nhid': 256, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 1024, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 256, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 1024, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': False},
-        {'nhid': 256, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 1024, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 256, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
-        {'nhid': 1024, 'nheads': 8, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True},
+        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True,
+         'final_temp': 0.5, 'temp_decay': 'exponential'},
+        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True,
+         'final_temp': 0.1, 'temp_decay': 'linear'},
+        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True,
+         'final_temp': 0.5, 'temp_decay': 'linear'},
+        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True,
+         'final_temp': 0.1, 'temp_decay': 'cosine'},
+        {'nhid': 512, 'nheads': 1, 'lr': 5e-4, 'dropout': 0.5, 'use_gumbel_softmax': True,
+         'final_temp': 0.5, 'temp_decay': 'cosine'}
+        
     ]
     
     # Create configs directory
@@ -226,8 +229,8 @@ def train_single_job(job_id):
         if config['use_gumbel_softmax']:
             model_kwargs.update({
                 'initial_temp': 1.0,
-                'final_temp': 0.1,
-                'temp_decay': 'exponential'
+                'final_temp': config['final_temp'],
+                'temp_decay': config['temp_decay']
             })
         
         # Create model
