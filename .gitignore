@@ -8,3 +8,6 @@ SPR_dataset/
 *.json
 *.arrow
 *.pkl
+useless/
+checkpoints/
+tests/results/
