@@ -13,7 +13,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import math
-from grid_search_transformer import WordTokenizer
+from grid_search.data_utils import WordTokenizer
+from models.lstm import SimpleLSTM
 
 sns.set_style("whitegrid")
 

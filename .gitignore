@@ -11,3 +11,4 @@ SPR_dataset/
 useless/
 checkpoints/
 tests/results/
+*.pt

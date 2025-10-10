@@ -132,7 +132,7 @@ class TransformerLayer(nn.Module):
         return x, attn_weights
 
 
-class SimpleTransformer(nn.Module):
+class Transformer(nn.Module):
     """
     Simple Transformer using our custom MultiHeadAttention
     """
@@ -198,7 +198,7 @@ class SimpleTransformer(nn.Module):
         return logits
 
 
-class SimpleTransformerLM(pl.LightningModule):
+class TransformerLM(pl.LightningModule):
     """
     Lightning wrapper for Simple Transformer - matches your CBR interface
     """
@@ -210,7 +210,7 @@ class SimpleTransformerLM(pl.LightningModule):
         self.save_hyperparameters()
         
         # Initialize the transformer
-        self.model = SimpleTransformer(
+        self.model = Transformer(
             vocab_size=vocab_size,
             d_model=d_model,
             nhead=nhead,
