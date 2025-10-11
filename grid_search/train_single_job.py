@@ -44,7 +44,7 @@ def train_single_job(job_id):
     
     try:
         # Load shared tokenizer
-        tokenizer = WordTokenizer.load("shared_data/tokenizer.json")
+        tokenizer = WordTokenizer.load("data/tokenizer/tokenizer.json")
         
         # Load data
         data_dir = "cbr_lightning/wikitext-103-raw"
