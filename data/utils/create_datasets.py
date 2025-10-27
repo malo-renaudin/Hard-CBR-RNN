@@ -1,5 +1,5 @@
 from datasets import load_from_disk
-from grid_search.data_utils import WordTokenizer, WikiTextDataset
+from data_utils import WordTokenizer, WikiTextDataset
 import torch
 import nltk
 
