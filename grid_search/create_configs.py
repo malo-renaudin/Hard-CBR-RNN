@@ -16,25 +16,25 @@ def create_configs(save_dir="./experiments/configs"):
 
     # ---- MODEL-SPECIFIC HYPERPARAMETERS ----
     grids = {
-        "CBR_RNN": {
-            "use_gumbel_softmax": [True],
-            "end_temp": [0.1, 0.5],
-            "temp_decay": [0.95, 0.99],
-            "nhid": [256, 512],
-            "nheads": [1, 4, 8],
-            "nlayers":[1]
-        },
+        # "CBR_RNN": {
+        #     "use_gumbel_softmax": [True],
+        #     "end_temp": [0.1, 0.5],
+        #     "temp_decay": [0.95, 0.99],
+        #     "nhid": [256, 512],
+        #     "nheads": [1, 4, 8],
+        #     "nlayers":[1]
+        # },
         "Transformer": {
-            "use_gumbel_softmax": [True, False],
-            "end_temp": [0.5],
-            "temp_decay": [0.99],
-            "nhid": [256, 512],
-            "nheads": [4, 8],
-            "nlayers": [2, 4],
+            "use_gumbel_softmax": [False],
+            "end_temp": [1],
+            "temp_decay": ['cosine'],
+            "nhid": [256],
+            "nheads": [8],
+            "nlayers": [6],
         },
-        "LSTM": {
-            "nhid": [256, 512, 1024],
-        },
+        # "LSTM": {
+        #     "nhid": [256, 512, 1024],
+        # },
     }
 
     # ---- GENERATE CONFIGURATIONS ----
