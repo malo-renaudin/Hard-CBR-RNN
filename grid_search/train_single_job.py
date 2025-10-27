@@ -9,18 +9,20 @@ from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 import datasets
 
-from data_utils import WordTokenizer, WikiTextDataset
-from lit_cbr import CBRLanguageModel
+# from data_utils import WordTokenizer, WikiTextDataset
+from models import CBR_LM, Transformer_LM, LSTM_LM
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from data.utils.data_utils import PreprocessedWikiTextDataset, WordTokenizer
 
 def train_single_job(job_id):
     """Train a single job given its ID"""
     # Create job directory
-    job_dir = Path(f"job_cbr_2_{job_id:03d}")
+    job_dir = Path(f"job_{job_id:03d}")
     job_dir.mkdir(exist_ok=True)
     
     # Load config
-    config_file = Path(f"job_cbr_2_configs/config_{job_id:03d}.json")
+    config_file = Path(f"./experiments/configs/config_{job_id:03d}.json")
     with open(config_file, 'r') as f:
         config = json.load(f)
     
@@ -47,12 +49,15 @@ def train_single_job(job_id):
         tokenizer = WordTokenizer.load("data/tokenizer/tokenizer.json")
         
         # Load data
-        data_dir = "cbr_lightning/wikitext-103-raw"
-        raw = datasets.load_from_disk(data_dir)
-        
+        train = torch.load('data/processed_datasets/train_data.pt')
+        train_ds = PreprocessedWikiTextDataset(train)
+
+        valid = torch.load('data/processed_datasets/valid_data.pt')
+        val_ds = PreprocessedWikiTextDataset(valid)
+        # raw = datasets.load_from_disk(data_dir)
         # Create datasets
-        train_ds = WikiTextDataset(raw['train'], tokenizer, seq_len=64)
-        val_ds = WikiTextDataset(raw['validation'], tokenizer, seq_len=64)
+        # train_ds = WikiTextDataset(raw['train'], tokenizer, seq_len=64)
+        # val_ds = WikiTextDataset(raw['validation'], tokenizer, seq_len=64)
         
         # Create data loaders
         train_loader = DataLoader(
@@ -66,27 +71,59 @@ def train_single_job(job_id):
         
         # Set up model kwargs
         model_kwargs = {
-            'vocab_size': tokenizer.vocab_size,
-            'ninp': config['nhid'],  # Use same as hidden
-            'nhid': config['nhid'],
-            'nlayers': 1,
-            'dropout': config['dropout'],
-            'nheads': config['nheads'],
-            'lr': config['lr'],
-            'weight_decay': 1e-4,
-            'use_gumbel_softmax': config['use_gumbel_softmax']
+        "vocab_size": tokenizer.vocab_size,
+        "ninp": config["nhid"],
+        "nhid": config["nhid"],
+        "dropout": 0.5,
+        "lr": 5e-4,
+        "weight_decay": 1e-4,
         }
+
+        # Add model-specific parameters
+        if model_name == "CBR_RNN":
+            model_kwargs.update({
+                "nheads": config["nheads"],
+                "use_gumbel_softmax": config["use_gumbel_softmax"],
+                "initial_temp": 1.0,
+                "final_temp": config["end_temp"],
+                "temp_decay": config["temp_decay"],
+            })
+
+        elif model_name == "Transformer":
+            model_kwargs.update({
+                "nheads": config["nheads"],
+                "nlayers": config["nlayers"],
+                "use_gumbel_softmax": config.get("use_gumbel_softmax", False),
+                "initial_temp": 1.0,
+                "final_temp": config.get("end_temp", 0.5),
+                "temp_decay": config.get("temp_decay", 0.99),
+            })
+
+        elif model_name == "LSTM":
+            model_kwargs.update({
+                "nlayers": config.get("nlayers", 2),  # fallback to 1 if missing
+            })
+
         
         # Add Gumbel parameters if needed
-        if config['use_gumbel_softmax']:
-            model_kwargs.update({
-                'initial_temp': 1.0,
-                'final_temp': config['final_temp'],
-                'temp_decay': config['temp_decay']
-            })
+        # if config['use_gumbel_softmax']:
+        #     model_kwargs.update({
+        #         'initial_temp': 1.0,
+        #         'final_temp': config['final_temp'],
+        #         'temp_decay': config['temp_decay']
+        #     })
         
         # Create model
-        model = CBRLanguageModel(**model_kwargs)
+        # model = CBRLanguageModel(**model_kwargs)
+        MODEL_CLASSES = {
+            "CBR_RNN": CBR_LM,
+            "Transformer": Transformer_LM,
+            "LSTM": LSTM_LM
+        }
+        model_name = config["model"]
+        ModelClass = MODEL_CLASSES[model_name]
+        model = ModelClass(**model_kwargs)
+
         
         # Setup trainer with job-specific checkpoint directory
         trainer = pl.Trainer(

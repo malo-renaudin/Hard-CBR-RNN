@@ -136,7 +136,7 @@ class CBR_RNN(nn.Module):
             for param in module.parameters():
                 nn.init.uniform_(param, -0.1, 0.1)
             
-class CBRLanguageModel(pl.LightningModule):
+class CBR_LM(pl.LightningModule):
     """PyTorch Lightning module for training CueBasedRNNModel with essential monitoring"""
     
     def __init__(self, vocab_size, ninp=512, nhid=512, nlayers=1, 
@@ -340,7 +340,7 @@ class CBRLanguageModel(pl.LightningModule):
                 "frequency": 1
             }
     }
-class SimpleLSTM(nn.Module):
+class LSTM(nn.Module):
     def __init__(self, vocab_size, emb_dim=512, hid_dim=512, nlayers=2, dropout=0.1):
         super().__init__()
         self.encoder = nn.Embedding(vocab_size, emb_dim)
@@ -370,11 +370,11 @@ class SimpleLSTM(nn.Module):
                 weight.new_zeros(self.nlayers, batch_size, self.hid_dim, device=device))
 
 
-class SimpleLSTM_LM(pl.LightningModule):
+class LSTM_LM(pl.LightningModule):
     def __init__(self, vocab_size, emb_dim, hid_dim, nlayers, dropout, lr, weight_decay):
         super().__init__()
         self.save_hyperparameters()
-        self.model = SimpleLSTM(vocab_size=vocab_size,
+        self.model = LSTM(vocab_size=vocab_size,
                                 emb_dim=emb_dim,
                                 hid_dim=hid_dim,
                                 nlayers=nlayers,
@@ -721,7 +721,7 @@ class Transformer(nn.Module):
         return logits
 
 
-class TransformerLM(pl.LightningModule):
+class Transformer_LM(pl.LightningModule):
     """
     Lightning wrapper for Simple Transformer - matches your CBR interface
     """

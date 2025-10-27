@@ -2,6 +2,10 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 import warnings
+from wordfreq import word_frequency
+import statsmodels.formula.api as smf
+import statsmodels.api as sm
+
 warnings.filterwarnings('ignore')
 
 def prepare_data_correct(rt_data, surprisal_data):
@@ -34,7 +38,7 @@ def prepare_data_correct(rt_data, surprisal_data):
     # Unigram surprisal
     word_counts = data['word'].value_counts()
     total_words = len(data)
-    data['unigram_surprisal'] = data['word'].map(lambda w: -np.log(word_counts.get(w, 1) / total_words))
+    data['unigram_surprisal'] = data['word'].apply(lambda w: -np.log(max(word_frequency(w, 'en'), 1e-9)))
     
     # Current and previous word surprisal
     data['current_surprisal'] = data['surprisal']
@@ -135,6 +139,76 @@ def compute_delta_loglik_correct(data):
         'lr_test': {
             'statistic': lr_stat if 'lr_stat' in locals() else np.nan,
             'p_value': p_value if 'p_value' in locals() else np.nan,
+            'df': 2
+        }
+    }
+
+def fit_baseline_model(data):
+    """
+    Fit the baseline mixed-effects model once.
+    """
+    try:
+        # Statsmodels mixed-effects syntax is different from R
+        print("\nFitting baseline model...")
+        baseline_model = smf.mixedlm(
+            "log_RT ~ word_length + word_position + unigram_surprisal", 
+            data, 
+            groups=data['subject']
+        ).fit(method=['nm'])
+    except Exception as e:
+        data_ols = data.copy()
+        data_ols['subject_numeric'] = pd.Categorical(data_ols['subject']).codes
+        
+        # Fallback with clustered standard errors
+        baseline_model = smf.ols(
+            "log_RT ~ word_length + word_position + unigram_surprisal", 
+            data_ols
+        ).fit(cov_type='cluster', cov_kwds={'groups': data_ols['subject_numeric']})
+        
+    return baseline_model
+
+def fit_full_model(data, baseline_model):
+    """
+    Fit the full model (with current and previous surprisal) and compute ΔLogLik.
+    Assumes baseline_model is pre-fitted.
+    """
+    try:
+        full_model = smf.mixedlm(
+            "log_RT ~ word_length + word_position + unigram_surprisal + current_surprisal + prev_surprisal",
+            data,
+            groups=data['subject']
+        ).fit(method=['nm'])
+        baseline_ll = baseline_model.llf
+        full_ll = full_model.llf
+    except Exception as e:
+        # fallback to OLS with clustered SE
+        data_ols = data.copy()
+        data_ols['subject_numeric'] = pd.Categorical(data_ols['subject']).codes
+        full_model = smf.ols(
+            "log_RT ~ word_length + word_position + unigram_surprisal + current_surprisal + prev_surprisal",
+            data_ols
+        ).fit(cov_type='cluster', cov_kwds={'groups': data_ols['subject_numeric']})
+        baseline_ll = baseline_model.llf
+        full_ll = full_model.llf
+
+    delta_loglik = full_ll - baseline_ll
+
+    # Likelihood ratio test
+    if np.isfinite(delta_loglik):
+        lr_stat = 2 * delta_loglik
+        df_diff = 2  # current_surprisal + prev_surprisal
+        p_value = 1 - stats.chi2.cdf(lr_stat, df_diff)
+    else:
+        lr_stat = np.nan
+        p_value = np.nan
+
+    return {
+        'delta_loglik': delta_loglik,
+        'baseline_model': baseline_model,
+        'full_model': full_model,
+        'lr_test': {
+            'statistic': lr_stat,
+            'p_value': p_value,
             'df': 2
         }
     }

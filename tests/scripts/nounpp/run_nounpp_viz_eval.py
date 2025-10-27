@@ -1,8 +1,8 @@
 from nounpp_viz_eval import load_tokenizer, NounPPDataset, collate_fn_nounpp, CBR_RNN, analyze_and_plot, SimpleTransformer, run_all_diagnostics
-from viz_attn import load_model
+# from viz_attn import load_model
 from torch.utils.data import Dataset, DataLoader
 import torch
-from grid_search import WordTokenizer
+from old import WordTokenizer
 
 no_gs = '/scratch2/mrenaudin/Hard-CBR-RNN/job_cbr_001/lightning_logs/version_1364336/checkpoints/epoch=49-step=309500.ckpt'
 check_0_1_exp = '/scratch2/mrenaudin/Hard-CBR-RNN/job_005/lightning_logs/version_1198536/checkpoints/epoch=49-step=565950.ckpt'
@@ -16,21 +16,23 @@ check_transformer_exp_01 = '/scratch2/mrenaudin/Hard-CBR-RNN/final_models/job_tr
 check_big_transformer_exp_0_1 = '/scratch2/mrenaudin/Hard-CBR-RNN/job_transformer_2_005/lightning_logs/version_1851789/checkpoints/epoch=49-step=309500.ckpt'
 check_big_cbr_exp_0_1 = '/scratch2/mrenaudin/Hard-CBR-RNN/job_cbr_2_005/lightning_logs/version_1850865/checkpoints/epoch=49-step=309500.ckpt'
 check_big_transformer_no_gs = '/scratch2/mrenaudin/Hard-CBR-RNN/job_transformer_2_001/lightning_logs/version_1851738/checkpoints/epoch=49-step=309500.ckpt'
-transformer_1024_8_heads = '/scratch2/mrenaudin/Hard-CBR-RNN/job_transformer_2_003/lightning_logs/version_1851787/checkpoints/epoch=49-step=309500.ckpt'
+transformer_1024_8_heads = '/scratch2/mrenaudin/Hard-CBR-RNN/checkpoints/job_transformer_2_003/lightning_logs/version_1851787/checkpoints/epoch=49-step=309500.ckpt'
 lstm = '/scratch2/mrenaudin/Hard-CBR-RNN/job_lstm_003/lightning_logs/version_1851441/checkpoints/epoch=49-step=309500.ckpt'
+cbr_512_8_heads ='/scratch2/mrenaudin/Hard-CBR-RNN/checkpoints/job_cbr_003/lightning_logs/version_1364338/checkpoints/epoch=49-step=309500.ckpt',
+cbr_1024_8_heads = '/scratch2/mrenaudin/Hard-CBR-RNN/checkpoints/job_cbr_2_003/lightning_logs/version_1850827/checkpoints/epoch=49-step=309500.ckpt',
 
 data_dir = "cbr_lightning/wikitext-103-raw"
 
 
-checkpoint = torch.load(transformer_1024_8_heads, map_location='cuda')
+checkpoint = torch.load(cbr_512_8_heads, map_location='cpu')
 state_dict = checkpoint['state_dict']
 from collections import OrderedDict
 new_state_dict = OrderedDict()
 for k, v in state_dict.items():
     name = k.replace('model.', '')  # remove 'model.' prefix
     new_state_dict[name] = v
-# model = CBR_RNN(49999, 512, 512, 1, 1, 0)
-model = SimpleTransformer(49999, d_model=1024, nhead=8, num_layers=2)
+model = CBR_RNN(49999, 512, 512, 1, 8, 0)
+# model = SimpleTransformer(49999, d_model=1024, nhead=8, num_layers=2)
 # from simple_lstm import SimpleLSTM_LM
 # def load_trained_lstm(checkpoint_path):
 #     model=SimpleLSTM_LM.load_from_checkpoint(checkpoint_path)
@@ -39,12 +41,12 @@ model = SimpleTransformer(49999, d_model=1024, nhead=8, num_layers=2)
 # model = load_trained_lstm(lstm)
 model.load_state_dict(new_state_dict)
 # stoi, itos = load_tokenizer('tokenizer.json') 
-tokenizer = WordTokenizer.load("tokenizer.json")
-test_dataset = NounPPDataset('nounpp.txt', tokenizer)
+tokenizer = WordTokenizer.load("tokenizer_ancien.json")
+test_dataset = NounPPDataset('tests/test_datasets/nounpp.txt', tokenizer)
 test_dataloader = DataLoader(test_dataset, batch_size=1000, collate_fn=collate_fn_nounpp)
 
 results = analyze_and_plot(model, test_dataloader, temperature=1, 
-                     use_gumbel=False, save_dir=None, seed=42)
-run_all_diagnostics(model, test_dataloader, tokenizer, device='cuda')
+                     use_gumbel=False, save_dir='tests/results/attention_plots/cbr_512_8_heads', seed=42)
+run_all_diagnostics(model, test_dataloader, tokenizer, device='cpu')
 
 # print(f"'remember' in tokenizer: {'remember' in stoi}")
