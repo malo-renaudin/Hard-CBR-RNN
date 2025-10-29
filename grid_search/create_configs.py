@@ -21,7 +21,7 @@ def create_configs(save_dir="./experiments/configs"):
             "end_temp": [1],
             "temp_decay": ['cosine'],
             "nhid": [1024],
-            "nheads": [12],
+            "nheads": [16],
             "nlayers":[1]
         },
         "Transformer": {
@@ -29,8 +29,8 @@ def create_configs(save_dir="./experiments/configs"):
             "end_temp": [1],
             "temp_decay": ['cosine'],
             "nhid": [1024],
-            "nheads": [12],
-            "nlayers": [12],
+            "nheads": [16],
+            "nlayers": [24],
         },
         # "LSTM": {
         #     "nhid": [256, 512, 1024],
