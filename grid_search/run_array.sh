@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=cbr_training
+#SBATCH --array=0-1
 #SBATCH --output=job_outputs/job_%A_%a.out
 #SBATCH --error=job_outputs/job_%A_%a.err
 #SBATCH --ntasks=1
