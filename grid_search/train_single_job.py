@@ -26,6 +26,8 @@ def train_single_job(job_id):
     with open(config_file, 'r') as f:
         config = json.load(f)
     
+    model_name = config["model"]
+    
     # Save config to job directory
     with open(job_dir / "config.json", 'w') as f:
         json.dump(config, f, indent=2)
@@ -120,7 +122,7 @@ def train_single_job(job_id):
             "Transformer": Transformer_LM,
             "LSTM": LSTM_LM
         }
-        model_name = config["model"]
+        # model_name = config["model"]
         ModelClass = MODEL_CLASSES[model_name]
         model = ModelClass(**model_kwargs)
 

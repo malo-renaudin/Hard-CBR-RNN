@@ -16,14 +16,14 @@ def create_configs(save_dir="./experiments/configs"):
 
     # ---- MODEL-SPECIFIC HYPERPARAMETERS ----
     grids = {
-        # "CBR_RNN": {
-        #     "use_gumbel_softmax": [True],
-        #     "end_temp": [0.1, 0.5],
-        #     "temp_decay": [0.95, 0.99],
-        #     "nhid": [256, 512],
-        #     "nheads": [1, 4, 8],
-        #     "nlayers":[1]
-        # },
+        "CBR_RNN": {
+            "use_gumbel_softmax": [False],
+            "end_temp": [1],
+            "temp_decay": ['cosine'],
+            "nhid": [512],
+            "nheads": [1],
+            "nlayers":[1]
+        },
         "Transformer": {
             "use_gumbel_softmax": [False],
             "end_temp": [1],
