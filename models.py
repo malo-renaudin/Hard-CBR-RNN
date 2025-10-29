@@ -84,7 +84,7 @@ class CBR_RNN(nn.Module):
             curr_emb, curr_hidden = emb[i], states[i]
             
             # Query computation
-            query = self.drop(F.relu(self.q_norm(self.q(torch.cat([curr_emb, curr_hidden], dim=-1)))))
+            query = self.drop(F.tanh(self.q_norm(self.q(torch.cat([curr_emb, curr_hidden], dim=-1)))))
             
             # Unified multi-head attention (single-head is just nheads=1)
             current_keys = keys[:cache_len].transpose(0, 1)  # batch_size x cache_len x nhid
@@ -109,10 +109,10 @@ class CBR_RNN(nn.Module):
             attn = torch.einsum('bnc,bcnh->bnh', attn_weights, v_mh).contiguous().view(batch_size, self.nhid)
             
             # Process through network layers
-            intermediate = self.drop(F.relu(self.int_norm(
+            intermediate = self.drop(F.tanh(self.int_norm(
                 self.intermediate_h(torch.cat([curr_emb, query, attn, curr_hidden], dim=-1)))))
             
-            final_output = self.drop(F.relu(self.f_norm(self.final_h(intermediate))))
+            final_output = self.drop(F.tanh(self.f_norm(self.final_h(intermediate))))
             key_i, value_i, hidden_i = final_output.split(self.nhid, dim=-1)
             
             states[i + 1] = hidden_i

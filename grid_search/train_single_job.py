@@ -74,8 +74,6 @@ def train_single_job(job_id):
         # Set up model kwargs
         model_kwargs = {
         "vocab_size": tokenizer.vocab_size,
-        "ninp": config["nhid"],
-        "nhid": config["nhid"],
         "dropout": 0.5,
         "lr": 5e-4,
         "weight_decay": 1e-4,
@@ -89,21 +87,26 @@ def train_single_job(job_id):
                 "initial_temp": 1.0,
                 "final_temp": config["end_temp"],
                 "temp_decay": config["temp_decay"],
+                "ninp": config["nhid"],
+                "nhid": config["nhid"],
             })
 
         elif model_name == "Transformer":
             model_kwargs.update({
-                "nheads": config["nheads"],
-                "nlayers": config["nlayers"],
+                "nhead": config["nheads"],
+                "num_layers": config["nlayers"],
                 "use_gumbel_softmax": config.get("use_gumbel_softmax", False),
                 "initial_temp": 1.0,
                 "final_temp": config.get("end_temp", 0.5),
                 "temp_decay": config.get("temp_decay", 0.99),
+                "d_model": config["nhid"]
             })
 
         elif model_name == "LSTM":
             model_kwargs.update({
-                "nlayers": config.get("nlayers", 2),  # fallback to 1 if missing
+                "nlayers": config.get("nlayers", 2), 
+                "emb_dim": config["nhid"],
+                "hid_dim": config["nhid"],
             })
 
         
