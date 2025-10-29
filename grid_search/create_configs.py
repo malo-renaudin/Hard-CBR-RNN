@@ -20,17 +20,17 @@ def create_configs(save_dir="./experiments/configs"):
             "use_gumbel_softmax": [False],
             "end_temp": [1],
             "temp_decay": ['cosine'],
-            "nhid": [512],
-            "nheads": [1],
+            "nhid": [1024],
+            "nheads": [12],
             "nlayers":[1]
         },
         "Transformer": {
             "use_gumbel_softmax": [False],
             "end_temp": [1],
             "temp_decay": ['cosine'],
-            "nhid": [256],
-            "nheads": [8],
-            "nlayers": [6],
+            "nhid": [1024],
+            "nheads": [12],
+            "nlayers": [12],
         },
         # "LSTM": {
         #     "nhid": [256, 512, 1024],
