@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import math
 import pytorch_lightning as pl
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, LambdaLR
          
 class CBR_RNN(nn.Module):
     def __init__(self, ntoken, ninp, nhid, nlayers, nheads=1, dropout=0.5):
@@ -889,7 +889,7 @@ class Transformer_LM(pl.LightningModule):
             lr = opt.param_groups[0]["lr"]
             self.log("learning_rate", lr, prog_bar=True)
     def configure_optimizers(self):
-        # Optimizer
+        # --- Optimizer ---
         optimizer = AdamW(
             self.parameters(),
             lr=self.lr,
@@ -898,22 +898,40 @@ class Transformer_LM(pl.LightningModule):
             eps=1e-8
         )
 
-        # Scheduler
-        scheduler = ReduceLROnPlateau(
-            optimizer,
-            mode='min',           # monitor validation loss
-            factor=0.5,           # reduce LR by half
-            patience=2,           # wait 2 epochs without improvement
-            min_lr=1e-5,          # minimum LR
+        # --- Warmup Scheduler ---
+        def lr_lambda(epoch):
+            warmup_epochs = 5  # number of warmup epochs
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs  # linearly increase
+            return 1.0  # keep LR at base level after warmup
 
+        warmup_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+        # --- Plateau Scheduler (used after warmup) ---
+        reduce_on_plateau = ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.5,
+            patience=2,
+            min_lr=1e-5,
         )
 
+        # --- Combine both ---
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss",  # the metric to monitor
-                "interval": "epoch",    # Reduce LR at epoch end
-                "frequency": 1
-            }
+            "lr_scheduler": [
+                {
+                    "scheduler": warmup_scheduler,
+                    "interval": "epoch",
+                    "frequency": 1,
+                    "name": "warmup_lr",
+                },
+                {
+                    "scheduler": reduce_on_plateau,
+                    "monitor": "val_loss",
+                    "interval": "epoch",
+                    "frequency": 1,
+                    "name": "reduce_on_plateau",
+                },
+            ],
         }
