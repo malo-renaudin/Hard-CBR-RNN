@@ -32,9 +32,9 @@ def create_configs(save_dir="./experiments/configs"):
             "nheads": [16],
             "nlayers": [24],
         },
-        # "LSTM": {
-        #     "nhid": [256, 512, 1024],
-        # },
+        "LSTM": {
+            "nhid": [256],
+        },
     }
 
     # ---- GENERATE CONFIGURATIONS ----
